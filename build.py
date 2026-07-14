@@ -18,8 +18,11 @@ def vendor(name):
 
 LEAFLET_CSS = vendor("leaflet.css")
 CLUSTER_CSS = vendor("MarkerCluster.css")
+MAPLIBRE_CSS = vendor("maplibre-gl.css")
 LEAFLET_JS = vendor("leaflet.js")
 CLUSTER_JS = vendor("leaflet.markercluster.js")
+MAPLIBRE_JS = vendor("maplibre-gl.js")
+MAPLIBRE_LEAFLET_JS = vendor("maplibre-gl-leaflet.js")
 
 # ---- classification ---------------------------------------------------------
 FOOD_RE = re.compile(
@@ -164,6 +167,8 @@ HTML = r"""<!doctype html>
 __LEAFLET_CSS__
 /* --- MarkerCluster.css (vendored, inlined) --- */
 __CLUSTER_CSS__
+/* --- maplibre-gl.css (vendored, inlined) --- */
+__MAPLIBRE_CSS__
 /* --- app styles --- */
 :root{
   --bg:#f7f5f2; --panel:#ffffff; --ink:#1c1c1e; --sub:#6b7280; --line:#e7e3dc;
@@ -172,13 +177,11 @@ __CLUSTER_CSS__
   --lbl:#1c1c1e; --lbl-halo:#ffffff; --lbl-visited:#178a3c;   /* labels on the light map */
 }
 @media (prefers-color-scheme: dark){
+  /* The vector basemap is recolored per-theme in JS (styleBasemap). Here we only
+     theme the app chrome + the place labels. */
   :root{ --bg:#1a1c1f; --panel:#26282c; --ink:#f2f2f4; --sub:#aab0b6; --line:#3a3d43;
          --visited:#37d05f; --shadow:0 6px 24px rgba(0,0,0,.5);
          --lbl:#f2f2f4; --lbl-halo:#141518; --lbl-visited:#37d05f; }
-  /* Apple-style dark map: darken the colorful Voyager tiles while KEEPING their hues
-     (invert flips light/dark, hue-rotate 180 restores the colors) — parks stay green,
-     water stays blue, on a dark canvas. Applies to tiles only, not pins/labels/UI. */
-  .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.95) contrast(.9) saturate(.95)}
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg)}
@@ -215,7 +218,7 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 /* label: dark text + white halo (map is always the colorful basemap).
    The declutter pass picks each label's side — right/left/top/bottom — to fit the most. */
 .lbl{position:absolute;white-space:nowrap;font-size:11px;font-weight:600;letter-spacing:-.01em;
-  color:var(--lbl);pointer-events:none;
+  color:var(--lbl);pointer-events:auto;cursor:pointer;
   text-shadow:0 0 3px var(--lbl-halo),0 0 3px var(--lbl-halo),0 0 4px var(--lbl-halo),0 1px 2px var(--lbl-halo)}
 .mk.visited .lbl{color:var(--lbl-visited)}
 .lbl.hide{display:none}
@@ -231,9 +234,10 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .me-dot{position:absolute;left:50%;top:50%;width:16px;height:16px;border-radius:50%;
   background:#0a84ff;border:3px solid #fff;box-shadow:0 0 5px rgba(0,0,0,.5);transform:translate(-50%,-50%)}
 
-/* cluster */
-.cl{display:flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:700;
-  background:rgba(10,132,255,.9);border:3px solid rgba(255,255,255,.7);box-shadow:0 2px 8px rgba(0,0,0,.35)}
+/* cluster: a representative pin wearing a little "+N covered" badge */
+.cbadge{position:absolute;top:-6px;right:-11px;min-width:16px;height:16px;padding:0 4px;
+  border-radius:9px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;
+  line-height:16px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.4);border:1.5px solid #fff}
 
 /* popup */
 .leaflet-popup-content-wrapper{border-radius:16px;box-shadow:var(--shadow);background:var(--panel);color:var(--ink)}
@@ -300,6 +304,14 @@ __LEAFLET_JS__
 __CLUSTER_JS__
 </script>
 <script>
+// --- maplibre-gl.js (vendored, inlined) ---
+__MAPLIBRE_JS__
+</script>
+<script>
+// --- maplibre-gl-leaflet.js (vendored, inlined) ---
+__MAPLIBRE_LEAFLET_JS__
+</script>
+<script>
 const PLACES = __DATA__;
 const TYPE_ON = {Eat:true, Shop:false, See:false};
 let REGION = "all";
@@ -313,27 +325,79 @@ try { VISITED = JSON.parse(localStorage.getItem(VKEY) || "{}"); } catch(e){}
 const pkey = p => p.name + "|" + p.lat.toFixed(5) + "," + p.lng.toFixed(5);
 const esc = s => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-// Always the colorful Voyager basemap (both light & dark UI) — color is what makes it readable.
-const tiles = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-
 const map = L.map("map", {
   zoomControl:false, attributionControl:true,
+  // The vector basemap (unlike the old raster layer) doesn't set the map's zoom range;
+  // markercluster needs a finite maxZoom to build its grid, so set it here explicitly.
+  maxZoom:20, minZoom:3,
   inertia:true, inertiaDeceleration:2200, inertiaMaxSpeed:3200, easeLinearity:0.22,
 }).setView([34.06,-118.30], 11);
 L.control.zoom({position:"bottomleft"}).addTo(map);
-// keepBuffer:4 loads a ring of tiles beyond the viewport; updateWhenIdle:false keeps
-// loading them mid-pan, so scrolling around stays seamless.
-L.tileLayer(tiles, {maxZoom:20, subdomains:"abcd", updateWhenIdle:false,
-  updateWhenZooming:false, keepBuffer:4,
-  attribution:'&copy; <a href="https://openstreetmap.org">OSM</a> &copy; <a href="https://carto.com">CARTO</a>'}).addTo(map);
+
+// --- Apple-style custom vector basemap (MapLibre GL, via maplibre-gl-leaflet) ---
+// Free OpenFreeMap 'positron' vector tiles restyled to our palette: grey land/roads,
+// green parks, blue water, and PURPLE shopping/commercial districts. Light & dark.
+const darkUI = window.matchMedia("(prefers-color-scheme: dark)").matches;
+const PAL = darkUI ? {
+  land:"#23262b", landuse:"#282b30", park:"#213d29", building:"#2c3037",
+  water:"#183a4e", road:"#3e434b", casing:"#2a2e35", boundary:"#474c54",
+  commercial:"rgba(128,98,170,.42)", label:"#c7ccd3", halo:"#141619"
+} : {
+  land:"#eeeeec", landuse:"#e7e6e3", park:"#cfe6c5", building:"#e2e1dd",
+  water:"#a7d3e8", road:"#ffffff", casing:"#dddbd6", boundary:"#ceccc7",
+  commercial:"rgba(150,120,205,.32)", label:"#5b6067", halo:"#ffffff"
+};
+
+const glLayer = L.maplibreGL({
+  style:"https://tiles.openfreemap.org/styles/positron",
+  attribution:'&copy; <a href="https://openfreemap.org">OpenFreeMap</a> &copy; <a href="https://openmaptiles.org">OpenMapTiles</a> &copy; OSM'
+}).addTo(map);
+
+function styleBasemap(m){
+  for(const layer of m.getStyle().layers){
+    const id = layer.id, t = layer.type, sl = layer["source-layer"];
+    try{
+      if(t === "background") m.setPaintProperty(id, "background-color", PAL.land);
+      else if(t === "fill"){
+        if(sl === "water") m.setPaintProperty(id, "fill-color", PAL.water);
+        else if(sl === "park" || /wood|grass|landcover|park/i.test(id)) m.setPaintProperty(id, "fill-color", PAL.park);
+        else if(sl === "building") m.setPaintProperty(id, "fill-color", PAL.building);
+        else if(sl === "landuse") m.setPaintProperty(id, "fill-color", PAL.landuse);
+      } else if(t === "line"){
+        if(sl === "water" || sl === "waterway") m.setPaintProperty(id, "line-color", PAL.water);
+        else if(/casing/.test(id)) m.setPaintProperty(id, "line-color", PAL.casing);
+        else if(sl === "transportation") m.setPaintProperty(id, "line-color", PAL.road);
+        else if(sl === "boundary") m.setPaintProperty(id, "line-color", PAL.boundary);
+      } else if(t === "symbol"){
+        m.setPaintProperty(id, "text-color", PAL.label);
+        m.setPaintProperty(id, "text-halo-color", PAL.halo);
+      }
+    }catch(e){}
+  }
+  // positron has no commercial layer — add Apple-style purple shopping districts
+  if(!m.getLayer("commercial-areas")){
+    try{ m.addLayer({
+      id:"commercial-areas", type:"fill", source:"openmaptiles", "source-layer":"landuse",
+      filter:["match", ["get","class"], ["commercial","retail"], true, false],
+      paint:{"fill-color":PAL.commercial}
+    }, "building"); }catch(e){}
+  }
+}
+const glMap = glLayer.getMaplibreMap();
+glMap.on("load", () => styleBasemap(glMap));
 
 const cluster = L.markerClusterGroup({
   maxClusterRadius:22, spiderfyOnMaxZoom:true, showCoverageOnHover:false,
+  // Don't hide everything behind a number bubble: show the most popular place's pin,
+  // with a small "+N" for how many others are stacked under it.
   iconCreateFunction: c => {
-    const n = c.getChildCount();
-    const s = n < 10 ? 34 : n < 50 ? 42 : 50;
-    return L.divIcon({html:`<div class="cl" style="width:${s}px;height:${s}px;font-size:${n<50?13:15}px">${n}</div>`,
-      className:"", iconSize:[s,s]});
+    const kids = c.getAllChildMarkers();
+    let rep = kids[0].__p;
+    for (const k of kids) if ((k.__p.pop||0) > (rep.pop||0)) rep = k.__p;
+    const more = kids.length - 1;
+    return L.divIcon({className:"", iconSize:[22,22], iconAnchor:[11,11], popupAnchor:[0,-11],
+      html:`<div class="mk"><div class="pin ${rep.type}">${rep.emoji}</div>`
+         + `<span class="cbadge">+${more}</span></div>`});
   }
 });
 map.addLayer(cluster);
@@ -526,8 +590,11 @@ render();
 html = (HTML
         .replace("__LEAFLET_CSS__", LEAFLET_CSS)
         .replace("__CLUSTER_CSS__", CLUSTER_CSS)
+        .replace("__MAPLIBRE_CSS__", MAPLIBRE_CSS)
         .replace("__LEAFLET_JS__", LEAFLET_JS)
         .replace("__CLUSTER_JS__", CLUSTER_JS)
+        .replace("__MAPLIBRE_JS__", MAPLIBRE_JS)
+        .replace("__MAPLIBRE_LEAFLET_JS__", MAPLIBRE_LEAFLET_JS)
         .replace("__DATA__", data_json))
 kb = len(html.encode("utf-8")) // 1024
 # Write to the repo root (handy for `python3 -m http.server`) and to deploy/
