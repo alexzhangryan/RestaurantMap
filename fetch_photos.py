@@ -22,7 +22,30 @@ import csv, json, os, re, sys, time, urllib.request, urllib.error
 HERE = os.path.dirname(os.path.abspath(__file__))
 TSV = os.path.join(HERE, "places-raw.tsv")
 PHOTO_DIR = os.path.join(HERE, "photos")
-KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+
+
+def load_key():
+    """Read the Google API key from the env var or a local .env (never committed).
+    Accepts common key names incl. the hyphenated 'google-place-api'."""
+    k = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    if k:
+        return k
+    envf = os.path.join(HERE, ".env")
+    if os.path.exists(envf):
+        with open(envf, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, _, val = line.partition("=")
+                name = name.strip().lower().replace("-", "_").replace(" ", "")
+                if name in ("google_places_api_key", "google_place_api",
+                            "google_places_api", "places_api_key", "google_api_key"):
+                    return val.strip().strip('"').strip("'")
+    return ""
+
+
+KEY = load_key()
 
 MAX_WIDTH = 800          # px; plenty for a phone card, keeps files small
 SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"

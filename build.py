@@ -169,12 +169,16 @@ __CLUSTER_CSS__
   --bg:#f7f5f2; --panel:#ffffff; --ink:#1c1c1e; --sub:#6b7280; --line:#e7e3dc;
   --eat:#e8590c; --shop:#7048e8; --see:#2b8a3e; --visited:#2fb344;
   --accent:#0a84ff; --shadow:0 6px 24px rgba(0,0,0,.12);
+  --lbl:#1c1c1e; --lbl-halo:#ffffff; --lbl-visited:#178a3c;   /* labels on the light map */
 }
 @media (prefers-color-scheme: dark){
   :root{ --bg:#1a1c1f; --panel:#26282c; --ink:#f2f2f4; --sub:#aab0b6; --line:#3a3d43;
-         --visited:#37d05f; --shadow:0 6px 24px rgba(0,0,0,.5); }
-  /* Lift the near-black dark basemap to a readable medium grey with brighter labels */
-  .leaflet-tile-pane{filter:brightness(2.4) contrast(.92) saturate(.95)}
+         --visited:#37d05f; --shadow:0 6px 24px rgba(0,0,0,.5);
+         --lbl:#f2f2f4; --lbl-halo:#141518; --lbl-visited:#37d05f; }
+  /* Apple-style dark map: darken the colorful Voyager tiles while KEEPING their hues
+     (invert flips light/dark, hue-rotate 180 restores the colors) — parks stay green,
+     water stays blue, on a dark canvas. Applies to tiles only, not pins/labels/UI. */
+  .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.95) contrast(.9) saturate(.95)}
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg)}
@@ -204,16 +208,28 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 /* marker + always-on label */
 .mk{position:relative;width:22px;height:22px}
 .pin{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;
-  background:var(--panel);border:2px solid var(--eat);font-size:12px;box-shadow:0 1px 4px rgba(0,0,0,.35)}
+  background:#fff;border:2px solid var(--eat);font-size:12px;box-shadow:0 1px 4px rgba(0,0,0,.4)}
 .pin.Shop{border-color:var(--shop)} .pin.See{border-color:var(--see)}
 .mk.visited .pin{border-color:var(--visited)}
 .leaflet-marker-icon .pin{transition:transform .1s}
-/* label sits to the right of the pin, halo keeps it legible over any tile */
-.lbl{position:absolute;left:26px;top:50%;transform:translateY(-50%);white-space:nowrap;
-  font-size:11px;font-weight:600;letter-spacing:-.01em;color:var(--ink);pointer-events:none;
-  text-shadow:0 0 3px var(--bg),0 0 3px var(--bg),0 0 4px var(--bg),0 1px 2px var(--bg)}
-.mk.visited .lbl{color:var(--visited)}
+/* label: dark text + white halo (map is always the colorful basemap).
+   The declutter pass picks each label's side — right/left/top/bottom — to fit the most. */
+.lbl{position:absolute;white-space:nowrap;font-size:11px;font-weight:600;letter-spacing:-.01em;
+  color:var(--lbl);pointer-events:none;
+  text-shadow:0 0 3px var(--lbl-halo),0 0 3px var(--lbl-halo),0 0 4px var(--lbl-halo),0 1px 2px var(--lbl-halo)}
+.mk.visited .lbl{color:var(--lbl-visited)}
 .lbl.hide{display:none}
+.lbl.pos-r{left:24px;top:11px;transform:translateY(-50%);text-align:left}
+.lbl.pos-l{right:24px;left:auto;top:11px;transform:translateY(-50%);text-align:right}
+.lbl.pos-t{left:11px;bottom:24px;top:auto;transform:translateX(-50%);text-align:center}
+.lbl.pos-b{left:11px;top:24px;transform:translateX(-50%);text-align:center}
+
+/* my-location dot + orientation cone (shows which way you're facing) */
+.me{position:relative;width:120px;height:120px}
+.me-cone{position:absolute;left:0;top:0;transform-origin:60px 60px;opacity:0;
+  transition:transform .12s ease-out, opacity .3s}
+.me-dot{position:absolute;left:50%;top:50%;width:16px;height:16px;border-radius:50%;
+  background:#0a84ff;border:3px solid #fff;box-shadow:0 0 5px rgba(0,0,0,.5);transform:translate(-50%,-50%)}
 
 /* cluster */
 .cl{display:flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:700;
@@ -297,14 +313,18 @@ try { VISITED = JSON.parse(localStorage.getItem(VKEY) || "{}"); } catch(e){}
 const pkey = p => p.name + "|" + p.lat.toFixed(5) + "," + p.lng.toFixed(5);
 const esc = s => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
-const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-const tiles = dark
-  ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-  : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+// Always the colorful Voyager basemap (both light & dark UI) — color is what makes it readable.
+const tiles = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
 
-const map = L.map("map", {zoomControl:false, attributionControl:true}).setView([34.06,-118.30], 11);
+const map = L.map("map", {
+  zoomControl:false, attributionControl:true,
+  inertia:true, inertiaDeceleration:2200, inertiaMaxSpeed:3200, easeLinearity:0.22,
+}).setView([34.06,-118.30], 11);
 L.control.zoom({position:"bottomleft"}).addTo(map);
-L.tileLayer(tiles, {maxZoom:20, subdomains:"abcd", updateWhenIdle:false, keepBuffer:3,
+// keepBuffer:4 loads a ring of tiles beyond the viewport; updateWhenIdle:false keeps
+// loading them mid-pan, so scrolling around stays seamless.
+L.tileLayer(tiles, {maxZoom:20, subdomains:"abcd", updateWhenIdle:false,
+  updateWhenZooming:false, keepBuffer:4,
   attribution:'&copy; <a href="https://openstreetmap.org">OSM</a> &copy; <a href="https://carto.com">CARTO</a>'}).addTo(map);
 
 const cluster = L.markerClusterGroup({
@@ -378,14 +398,17 @@ function render(){
   scheduleDeclutter();
 }
 
-// --- Apple-Maps-style labels: show names, hide any that would overlap ---
-function labelBox(p, pt){
-  const w = 10 + Math.min(p.name.length, 24) * 6.3;   // approx label width
-  return {x1: pt.x + 15, y1: pt.y - 9, x2: pt.x + 15 + w, y2: pt.y + 9};
-}
+// --- Apple-Maps-style labels: show names, nudge each to whichever side fits, hide the rest ---
 function overlaps(a, b){ return !(a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1); }
+function labelBox(pos, pt, w){
+  const h = 15, gx = 13, gy = 13;            // gap from the pin center
+  if (pos === "r") return {x1: pt.x+gx,   y1: pt.y-h/2,    x2: pt.x+gx+w, y2: pt.y+h/2};
+  if (pos === "l") return {x1: pt.x-gx-w, y1: pt.y-h/2,    x2: pt.x-gx,   y2: pt.y+h/2};
+  if (pos === "t") return {x1: pt.x-w/2,  y1: pt.y-gy-h,   x2: pt.x+w/2,  y2: pt.y-gy};
+  return                 {x1: pt.x-w/2,  y1: pt.y+gy,     x2: pt.x+w/2,  y2: pt.y+gy+h};  // "b"
+}
 function declutter(){
-  const sz = map.getSize(), placed = [];
+  const sz = map.getSize(), cand = [];
   for (const m of VIS){
     const el = m.getElement();               // null while inside a cluster
     if (!el) continue;
@@ -394,11 +417,22 @@ function declutter(){
     let indiv = false;
     try { indiv = cluster.getVisibleParent(m) === m; } catch(e){ indiv = false; }
     const pt = indiv ? map.latLngToContainerPoint(m.getLatLng()) : null;
-    const off = !pt || pt.x < -60 || pt.y < -20 || pt.x > sz.x + 60 || pt.y > sz.y + 20;
+    const off = !pt || pt.x < -60 || pt.y < -30 || pt.x > sz.x + 60 || pt.y > sz.y + 30;
     if (!indiv || off){ lbl.classList.add("hide"); continue; }
-    const box = labelBox(m.__p, pt);
-    if (placed.some(b => overlaps(b, box))) lbl.classList.add("hide");
-    else { placed.push(box); lbl.classList.remove("hide"); }
+    cand.push({lbl, pt, name: m.__p.name});
+  }
+  // seed the occupied list with every visible pin so labels never sit on top of a pin
+  const placed = cand.map(c => ({x1: c.pt.x-12, y1: c.pt.y-12, x2: c.pt.x+12, y2: c.pt.y+12}));
+  const SIDES = ["r", "l", "t", "b"];
+  for (const c of cand){
+    const w = 10 + Math.min(c.name.length, 24) * 6.3;
+    let side = null;
+    for (const s of SIDES){
+      const box = labelBox(s, c.pt, w);
+      if (box.x1 < -60 || box.x2 > sz.x + 60) continue;   // keep on-screen
+      if (!placed.some(b => overlaps(b, box))){ placed.push(box); side = s; break; }
+    }
+    c.lbl.className = side ? ("lbl pos-" + side) : "lbl hide";
   }
 }
 let declRAF = 0;
@@ -437,14 +471,50 @@ document.addEventListener("click", e => {
   if (el){ const mk = el.querySelector(".mk"); if (mk) mk.classList.toggle("visited", now); }
 });
 
-// locate
-let meMarker=null;
+// locate + orientation cone ("where I'm looking")
+let meMarker = null, currentHeading = 0, headingOn = false;
+
+const CONE = `<svg class="me-cone" width="120" height="120" viewBox="-60 -60 120 120">
+  <defs><radialGradient id="cg" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="rgba(10,132,255,.55)"/>
+    <stop offset="100%" stop-color="rgba(10,132,255,0)"/>
+  </radialGradient></defs>
+  <path d="M0,0 L-33,-48 A58,58 0 0 1 33,-48 Z" fill="url(#cg)"/></svg>`;
+
+function updateCone(){
+  if(!meMarker) return;
+  const el = meMarker.getElement(); if(!el) return;
+  const cone = el.querySelector(".me-cone");
+  if(cone){ cone.style.transform = `rotate(${currentHeading}deg)`; cone.style.opacity = 1; }
+}
+function onOrient(e){
+  let h = null;
+  if(typeof e.webkitCompassHeading === "number") h = e.webkitCompassHeading;      // iOS
+  else if(e.absolute === true && typeof e.alpha === "number") h = 360 - e.alpha;   // Android
+  if(h == null || isNaN(h)) return;
+  currentHeading = h; updateCone();
+}
+function startHeading(){
+  if(headingOn) return; headingOn = true;
+  window.addEventListener("deviceorientationabsolute", onOrient, true);
+  window.addEventListener("deviceorientation", onOrient, true);
+}
+
 document.getElementById("locate").addEventListener("click", () => {
+  const DOE = window.DeviceOrientationEvent;          // iOS needs permission on a user gesture
+  if(DOE && typeof DOE.requestPermission === "function")
+    DOE.requestPermission().then(s => { if(s === "granted") startHeading(); }).catch(()=>{});
+  else startHeading();
   map.locate({setView:true, maxZoom:15, enableHighAccuracy:true});
 });
 map.on("locationfound", e => {
-  if(meMarker) map.removeLayer(meMarker);
-  meMarker = L.circleMarker(e.latlng, {radius:8, color:"#fff", weight:3, fillColor:"#0a84ff", fillOpacity:1}).addTo(map);
+  if(meMarker){ meMarker.setLatLng(e.latlng); }
+  else {
+    meMarker = L.marker(e.latlng, {interactive:false, zIndexOffset:10000, icon: L.divIcon({
+      className:"", iconSize:[120,120], iconAnchor:[60,60],
+      html:`<div class="me">${CONE}<div class="me-dot"></div></div>`})}).addTo(map);
+  }
+  updateCone();
 });
 map.on("locationerror", () => alert("Couldn't get your location. Allow location access and try again."));
 
