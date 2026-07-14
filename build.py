@@ -4,7 +4,7 @@
 Re-run this whenever the data changes (e.g. after adding known-for / why notes):
     python3 build.py
 """
-import csv, json, re, os
+import csv, json, re, os, shutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TSV = os.path.join(HERE, "places-raw.tsv")
@@ -96,6 +96,18 @@ def city_of(addr):
     m = re.search(r"([A-Za-z][A-Za-z .'-]+),\s*CA", addr)
     return m.group(1).strip() if m else "?"
 
+def slug(name, lat, lng):
+    """Stable filename for a place's cached photo. MUST match fetch_photos.py."""
+    s = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40]
+    return f"{s}-{round(lat, 4)}_{round(lng, 4)}"
+
+PHOTO_DIR = os.path.join(HERE, "photos")
+
+def photo_for(name, lat, lng):
+    """Relative URL if a cached photo exists (from fetch_photos.py), else ''."""
+    fn = slug(name, lat, lng) + ".jpg"
+    return f"photos/{fn}" if os.path.exists(os.path.join(PHOTO_DIR, fn)) else ""
+
 # ---- load -------------------------------------------------------------------
 places = []
 with open(TSV, newline="", encoding="utf-8") as f:
@@ -119,6 +131,7 @@ with open(TSV, newline="", encoding="utf-8") as f:
             "region": region,
             "type": classify_type(cat),
             "emoji": emoji_for(cat),
+            "photo": photo_for(row["name"].strip(), lat, lng),
             # enrichment fields (filled in a later pass)
             "known": (row.get("known") or "").strip(),
             "why": (row.get("why") or "").strip(),
@@ -154,11 +167,14 @@ __CLUSTER_CSS__
 /* --- app styles --- */
 :root{
   --bg:#f7f5f2; --panel:#ffffff; --ink:#1c1c1e; --sub:#6b7280; --line:#e7e3dc;
-  --eat:#e8590c; --shop:#7048e8; --see:#2b8a3e; --accent:#0a84ff; --shadow:0 6px 24px rgba(0,0,0,.12);
+  --eat:#e8590c; --shop:#7048e8; --see:#2b8a3e; --visited:#2fb344;
+  --accent:#0a84ff; --shadow:0 6px 24px rgba(0,0,0,.12);
 }
 @media (prefers-color-scheme: dark){
-  :root{ --bg:#111214; --panel:#1c1d20; --ink:#f2f2f4; --sub:#9aa0a6; --line:#2c2e33;
-         --shadow:0 6px 24px rgba(0,0,0,.5); }
+  :root{ --bg:#1a1c1f; --panel:#26282c; --ink:#f2f2f4; --sub:#aab0b6; --line:#3a3d43;
+         --visited:#37d05f; --shadow:0 6px 24px rgba(0,0,0,.5); }
+  /* Lift the near-black dark basemap to a readable medium grey with brighter labels */
+  .leaflet-tile-pane{filter:brightness(2.4) contrast(.92) saturate(.95)}
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;color:var(--ink);background:var(--bg)}
@@ -185,11 +201,19 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .chip[aria-pressed="true"].see{background:var(--see);border-color:var(--see);color:#fff}
 .chip[aria-pressed="true"].region{background:var(--ink);border-color:var(--ink);color:var(--bg)}
 
-/* marker */
-.pin{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;
-  background:var(--panel);border:2px solid var(--eat);font-size:15px;box-shadow:0 2px 6px rgba(0,0,0,.3)}
+/* marker + always-on label */
+.mk{position:relative;width:22px;height:22px}
+.pin{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;
+  background:var(--panel);border:2px solid var(--eat);font-size:12px;box-shadow:0 1px 4px rgba(0,0,0,.35)}
 .pin.Shop{border-color:var(--shop)} .pin.See{border-color:var(--see)}
+.mk.visited .pin{border-color:var(--visited)}
 .leaflet-marker-icon .pin{transition:transform .1s}
+/* label sits to the right of the pin, halo keeps it legible over any tile */
+.lbl{position:absolute;left:26px;top:50%;transform:translateY(-50%);white-space:nowrap;
+  font-size:11px;font-weight:600;letter-spacing:-.01em;color:var(--ink);pointer-events:none;
+  text-shadow:0 0 3px var(--bg),0 0 3px var(--bg),0 0 4px var(--bg),0 1px 2px var(--bg)}
+.mk.visited .lbl{color:var(--visited)}
+.lbl.hide{display:none}
 
 /* cluster */
 .cl{display:flex;align-items:center;justify-content:center;border-radius:50%;color:#fff;font-weight:700;
@@ -199,6 +223,8 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .leaflet-popup-content-wrapper{border-radius:16px;box-shadow:var(--shadow);background:var(--panel);color:var(--ink)}
 .leaflet-popup-content{margin:14px 16px;font-size:14px;line-height:1.4}
 .leaflet-popup-tip{background:var(--panel)}
+.card .photo{width:100%;height:132px;object-fit:cover;border-radius:12px;margin:0 0 10px;
+  display:block;background:var(--line)}
 .card h3{margin:0 0 2px;font-size:17px;letter-spacing:-.01em}
 .card .meta{color:var(--sub);font-size:13px;margin-bottom:6px}
 .card .addr{color:var(--sub);font-size:12px;margin:6px 0 10px}
@@ -206,6 +232,13 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .card .why{margin:6px 0;font-style:italic;color:var(--sub)}
 .card .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;color:#fff;margin-bottom:6px}
 .tag.Eat{background:var(--eat)} .tag.Shop{background:var(--shop)} .tag.See{background:var(--see)}
+.visited-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin:2px 0 9px;
+  padding:10px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);
+  font-weight:600;font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.visited-btn .box{width:17px;height:17px;border-radius:5px;border:2px solid var(--sub);
+  display:flex;align-items:center;justify-content:center;font-size:12px;line-height:1;color:#fff}
+.visited-btn.on{border-color:var(--visited);color:var(--visited);background:color-mix(in srgb,var(--visited) 12%,transparent)}
+.visited-btn.on .box{background:var(--visited);border-color:var(--visited)}
 .btns{display:flex;gap:8px;margin-top:4px}
 .btn{flex:1;text-align:center;text-decoration:none;font-weight:600;font-size:13px;padding:9px;border-radius:10px;
   background:var(--accent);color:#fff}
@@ -255,6 +288,14 @@ const PLACES = __DATA__;
 const TYPE_ON = {Eat:true, Shop:false, See:false};
 let REGION = "all";
 let QUERY = "";
+let VIS = [];   // markers currently shown (set each render, used by declutter)
+
+// --- visited state (saved on THIS device only) ---
+const VKEY = "visited_v1";
+let VISITED = {};
+try { VISITED = JSON.parse(localStorage.getItem(VKEY) || "{}"); } catch(e){}
+const pkey = p => p.name + "|" + p.lat.toFixed(5) + "," + p.lng.toFixed(5);
+const esc = s => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
 const tiles = dark
@@ -267,7 +308,7 @@ L.tileLayer(tiles, {maxZoom:20, subdomains:"abcd", updateWhenIdle:false, keepBuf
   attribution:'&copy; <a href="https://openstreetmap.org">OSM</a> &copy; <a href="https://carto.com">CARTO</a>'}).addTo(map);
 
 const cluster = L.markerClusterGroup({
-  maxClusterRadius:50, spiderfyOnMaxZoom:true, showCoverageOnHover:false,
+  maxClusterRadius:22, spiderfyOnMaxZoom:true, showCoverageOnHover:false,
   iconCreateFunction: c => {
     const n = c.getChildCount();
     const s = n < 10 ? 34 : n < 50 ? 42 : 50;
@@ -281,15 +322,21 @@ function dirUrl(p){ return `https://maps.apple.com/?daddr=${p.lat},${p.lng}&q=${
 function gmapUrl(p){ return `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`; }
 
 function popupHtml(p){
-  const known = p.known ? `<div class="known"><b>Known for:</b> ${p.known}</div>` : "";
-  const why = p.why ? `<div class="why">“${p.why}”</div>` : "";
-  const price = p.price ? ` · ${p.price}` : "";
+  const photo = p.photo ? `<img class="photo" src="${p.photo}" alt="" loading="lazy">` : "";
+  const known = p.known ? `<div class="known"><b>Known for:</b> ${esc(p.known)}</div>` : "";
+  const why = p.why ? `<div class="why">“${esc(p.why)}”</div>` : "";
+  const price = p.price ? ` · ${esc(p.price)}` : "";
+  const on = VISITED[pkey(p)] ? " on" : "";
   return `<div class="card">
+    ${photo}
     <span class="tag ${p.type}">${p.emoji} ${p.type}</span>
-    <h3>${p.name}</h3>
-    <div class="meta">${p.cat}${price}</div>
+    <h3>${esc(p.name)}</h3>
+    <div class="meta">${esc(p.cat)}${price}</div>
     ${known}${why}
-    <div class="addr">${p.addr}</div>
+    <div class="addr">${esc(p.addr)}</div>
+    <button class="visited-btn${on}" data-k="${esc(pkey(p))}">
+      <span class="box">${on ? "✓" : ""}</span><span class="lab">${on ? "Visited" : "Mark visited"}</span>
+    </button>
     <div class="btns">
       <a class="btn" href="${dirUrl(p)}" target="_blank" rel="noopener">Directions</a>
       <a class="btn sec" href="${gmapUrl(p)}" target="_blank" rel="noopener">Google</a>
@@ -297,12 +344,19 @@ function popupHtml(p){
   </div>`;
 }
 
+function iconFor(p){
+  const v = VISITED[pkey(p)] ? " visited" : "";
+  return L.divIcon({className:"", iconSize:[22,22], iconAnchor:[11,11], popupAnchor:[0,-11],
+    html:`<div class="mk${v}"><div class="pin ${p.type}">${p.emoji}</div>`
+       + `<span class="lbl hide">${esc(p.name)}</span></div>`});
+}
+
+const byKey = {};
 const markers = PLACES.map(p => {
-  const m = L.marker([p.lat,p.lng], {icon: L.divIcon({
-    className:"", iconSize:[30,30], iconAnchor:[15,15], popupAnchor:[0,-14],
-    html:`<div class="pin ${p.type}">${p.emoji}</div>`})});
+  const m = L.marker([p.lat,p.lng], {icon: iconFor(p)});
   m.__p = p;
-  m.bindPopup(popupHtml(p), {maxWidth:280, minWidth:220});
+  m.bindPopup(popupHtml(p), {maxWidth:300, minWidth:230});
+  byKey[pkey(p)] = m;
   return m;
 });
 
@@ -318,9 +372,42 @@ function render(){
     if (q && !(p.name.toLowerCase().includes(q) || p.cat.toLowerCase().includes(q) || p.city.toLowerCase().includes(q))) continue;
     vis.push(m); shown++;
   }
+  VIS = vis;
   cluster.addLayers(vis);
   document.getElementById("count").textContent = shown + " places";
+  scheduleDeclutter();
 }
+
+// --- Apple-Maps-style labels: show names, hide any that would overlap ---
+function labelBox(p, pt){
+  const w = 10 + Math.min(p.name.length, 24) * 6.3;   // approx label width
+  return {x1: pt.x + 15, y1: pt.y - 9, x2: pt.x + 15 + w, y2: pt.y + 9};
+}
+function overlaps(a, b){ return !(a.x2 < b.x1 || b.x2 < a.x1 || a.y2 < b.y1 || b.y2 < a.y1); }
+function declutter(){
+  const sz = map.getSize(), placed = [];
+  for (const m of VIS){
+    const el = m.getElement();               // null while inside a cluster
+    if (!el) continue;
+    const lbl = el.querySelector(".lbl");
+    if (!lbl) continue;
+    let indiv = false;
+    try { indiv = cluster.getVisibleParent(m) === m; } catch(e){ indiv = false; }
+    const pt = indiv ? map.latLngToContainerPoint(m.getLatLng()) : null;
+    const off = !pt || pt.x < -60 || pt.y < -20 || pt.x > sz.x + 60 || pt.y > sz.y + 20;
+    if (!indiv || off){ lbl.classList.add("hide"); continue; }
+    const box = labelBox(m.__p, pt);
+    if (placed.some(b => overlaps(b, box))) lbl.classList.add("hide");
+    else { placed.push(box); lbl.classList.remove("hide"); }
+  }
+}
+let declRAF = 0;
+function scheduleDeclutter(){
+  if (declRAF) return;
+  declRAF = requestAnimationFrame(() => { declRAF = 0; declutter(); });
+}
+map.on("zoomend moveend", scheduleDeclutter);
+cluster.on("animationend", scheduleDeclutter);
 
 // chips
 document.getElementById("chips").addEventListener("click", e => {
@@ -336,6 +423,19 @@ document.getElementById("chips").addEventListener("click", e => {
   render();
 });
 document.getElementById("q").addEventListener("input", e => { QUERY = e.target.value; render(); });
+
+// visited toggle (inside popups) — flips the on-device flag + pin outline to green
+document.addEventListener("click", e => {
+  const b = e.target.closest(".visited-btn"); if(!b) return;
+  const k = b.dataset.k, now = !VISITED[k];
+  if (now) VISITED[k] = 1; else delete VISITED[k];
+  try { localStorage.setItem(VKEY, JSON.stringify(VISITED)); } catch(err){}
+  b.classList.toggle("on", now);
+  b.querySelector(".box").textContent = now ? "✓" : "";
+  b.querySelector(".lab").textContent = now ? "Visited" : "Mark visited";
+  const m = byKey[k], el = m && m.getElement();
+  if (el){ const mk = el.querySelector(".mk"); if (mk) mk.classList.toggle("visited", now); }
+});
 
 // locate
 let meMarker=null;
@@ -368,3 +468,12 @@ for out in (OUT, os.path.join(deploy_dir, "index.html")):
     with open(out, "w", encoding="utf-8") as f:
         f.write(html)
     print(f"Wrote {out} ({kb} KB, self-contained — 1 request)")
+
+# Mirror cached photos into deploy/ so the served build can show them.
+if os.path.isdir(PHOTO_DIR):
+    dst = os.path.join(deploy_dir, "photos")
+    shutil.copytree(PHOTO_DIR, dst, dirs_exist_ok=True)
+    n = len([f for f in os.listdir(PHOTO_DIR) if f.endswith(".jpg")])
+    print(f"Copied {n} photos -> {dst}")
+else:
+    print("No photos/ yet — run fetch_photos.py to add food photos (see README).")
