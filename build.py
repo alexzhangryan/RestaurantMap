@@ -60,9 +60,17 @@ EMOJI = [
     (r"Korean", "🍲"),
     (r"Japanese|Izakaya", "🍱"),
     (r"Chinese|Cantonese|Szechuan|Taiwanese|Asian", "🥢"),
-    (r"Italian|French|Bistro|American|Soul Food|Peruvian|Malaysian|Bar", "🍽️"),
+    (r"Italian", "🍝"),
+    (r"French|Bistro", "🍷"),
+    (r"Soul Food", "🍗"),
+    (r"Peruvian", "🐟"),
+    (r"Malaysian|Singapore", "🍜"),
+    (r"Sandwich|Deli", "🥪"),
+    (r"Juice|Smoothie", "🥤"),
+    (r"Farmers Market|Street Food", "🧺"),
+    (r"American|Bar", "🍽️"),
     (r"Dessert|Confection", "🍰"),
-    (r"Cafe|Food Court|Sandwich|Deli|Smoothie|Farmers Market", "🍴"),
+    (r"Cafe|Food Court", "☕"),
     # non-food
     (r"Museum|Historic", "🏛️"),
     (r"Garden", "🌿"),
@@ -111,6 +119,29 @@ def photo_for(name, lat, lng):
     fn = slug(name, lat, lng) + ".jpg"
     return f"photos/{fn}" if os.path.exists(os.path.join(PHOTO_DIR, fn)) else ""
 
+# ---- enrichment -------------------------------------------------------------
+# enrich.tsv (authored blurbs): slug, known, why, emoji
+# digests.tsv (from fetch_enrich.py): includes rating + review count per slug
+ENRICH = {}
+enrich_path = os.path.join(HERE, "enrich.tsv")
+if os.path.exists(enrich_path):
+    with open(enrich_path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f, delimiter="\t"):
+            ENRICH[row["slug"]] = row
+digests_path = os.path.join(HERE, "digests.tsv")
+if os.path.exists(digests_path):
+    with open(digests_path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f, delimiter="\t"):
+            d = ENRICH.setdefault(row["slug"], {})
+            d.setdefault("rating", row.get("rating", ""))
+            d.setdefault("count", row.get("count", ""))
+# featured.tsv: verified Michelin / Infatuation / etc. badges (slug -> feat line)
+featured_path = os.path.join(HERE, "featured.tsv")
+if os.path.exists(featured_path):
+    with open(featured_path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f, delimiter="\t"):
+            ENRICH.setdefault(row["slug"], {})["feat"] = row["feat"]
+
 # ---- load -------------------------------------------------------------------
 places = []
 with open(TSV, newline="", encoding="utf-8") as f:
@@ -124,8 +155,14 @@ with open(TSV, newline="", encoding="utf-8") as f:
         cat = row.get("category", "") or ""
         city = city_of(row.get("address", "") or "")
         region = "Bay Area" if lat > 36.5 else "LA / SoCal"
+        name = row["name"].strip()
+        en = ENRICH.get(slug(name, lat, lng), {})
+        try:
+            pop = int(en.get("count") or 0)
+        except ValueError:
+            pop = 0
         places.append({
-            "name": row["name"].strip(),
+            "name": name,
             "cat": cat,
             "price": (row.get("price") or "").strip(),
             "lat": lat, "lng": lng,
@@ -133,11 +170,15 @@ with open(TSV, newline="", encoding="utf-8") as f:
             "city": city,
             "region": region,
             "type": classify_type(cat),
-            "emoji": emoji_for(cat),
-            "photo": photo_for(row["name"].strip(), lat, lng),
-            # enrichment fields (filled in a later pass)
-            "known": (row.get("known") or "").strip(),
-            "why": (row.get("why") or "").strip(),
+            # per-place icon from the enrichment pass (tailored to the signature
+            # dish) wins over the coarse category fallback
+            "emoji": (en.get("emoji") or "").strip() or emoji_for(cat),
+            "photo": photo_for(name, lat, lng),
+            "known": (en.get("known") or row.get("known") or "").strip(),
+            "why": (en.get("why") or row.get("why") or "").strip(),
+            "feat": (en.get("feat") or "").strip(),
+            "rating": (en.get("rating") or "").strip(),
+            "pop": pop,
         })
 
 places.sort(key=lambda p: (p["region"], p["city"], p["name"]))
@@ -248,6 +289,10 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .card h3{margin:0 0 2px;font-size:17px;letter-spacing:-.01em}
 .card .meta{color:var(--sub);font-size:13px;margin-bottom:6px}
 .card .addr{color:var(--sub);font-size:12px;margin:6px 0 10px}
+.card .feat{margin:6px 0;font-size:12.5px;font-weight:700;color:#b8860b;
+  background:color-mix(in srgb,#b8860b 10%,transparent);border-radius:8px;padding:5px 8px}
+@media (prefers-color-scheme: dark){.card .feat{color:#e6b84c;
+  background:color-mix(in srgb,#e6b84c 12%,transparent)}}
 .card .known{margin:6px 0}
 .card .why{margin:6px 0;font-style:italic;color:var(--sub)}
 .card .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;color:#fff;margin-bottom:6px}
@@ -405,18 +450,21 @@ map.addLayer(cluster);
 function dirUrl(p){ return `https://maps.apple.com/?daddr=${p.lat},${p.lng}&q=${encodeURIComponent(p.name)}`; }
 function gmapUrl(p){ return `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`; }
 
+function fmtCount(n){ return n >= 1000 ? (n/1000).toFixed(1).replace(/\.0$/,"") + "k" : "" + n; }
 function popupHtml(p){
   const photo = p.photo ? `<img class="photo" src="${p.photo}" alt="" loading="lazy">` : "";
+  const feat = p.feat ? `<div class="feat">🏅 ${esc(p.feat)}</div>` : "";
   const known = p.known ? `<div class="known"><b>Known for:</b> ${esc(p.known)}</div>` : "";
   const why = p.why ? `<div class="why">“${esc(p.why)}”</div>` : "";
   const price = p.price ? ` · ${esc(p.price)}` : "";
+  const stars = p.rating ? ` · ★ ${p.rating}${p.pop ? " (" + fmtCount(p.pop) + ")" : ""}` : "";
   const on = VISITED[pkey(p)] ? " on" : "";
   return `<div class="card">
     ${photo}
     <span class="tag ${p.type}">${p.emoji} ${p.type}</span>
     <h3>${esc(p.name)}</h3>
-    <div class="meta">${esc(p.cat)}${price}</div>
-    ${known}${why}
+    <div class="meta">${esc(p.cat)}${price}${stars}</div>
+    ${feat}${known}${why}
     <div class="addr">${esc(p.addr)}</div>
     <button class="visited-btn${on}" data-k="${esc(pkey(p))}">
       <span class="box">${on ? "✓" : ""}</span><span class="lab">${on ? "Visited" : "Mark visited"}</span>
