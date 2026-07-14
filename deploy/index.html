@@ -1220,11 +1220,11 @@ L.control.zoom({position:"bottomleft"}).addTo(map);
 // green parks, blue water, and PURPLE shopping/commercial districts. Light & dark.
 const darkUI = window.matchMedia("(prefers-color-scheme: dark)").matches;
 const PAL = darkUI ? {
-  land:"#23262b", landuse:"#282b30", park:"#213d29", building:"#2c3037",
+  land:"#23262b", landuse:"#282b30", park:"#213d29", building:"#2c3037", bldgLine:"#41464e",
   water:"#183a4e", road:"#3e434b", casing:"#2a2e35", boundary:"#474c54",
   commercial:"rgba(128,98,170,.42)", label:"#c7ccd3", halo:"#141619"
 } : {
-  land:"#eeeeec", landuse:"#e7e6e3", park:"#cfe6c5", building:"#e2e1dd",
+  land:"#eeeeec", landuse:"#e7e6e3", park:"#cfe6c5", building:"#e2e1dd", bldgLine:"#d8d6d1",
   water:"#a7d3e8", road:"#ffffff", casing:"#dddbd6", boundary:"#ceccc7",
   commercial:"rgba(150,120,205,.32)", label:"#5b6067", halo:"#ffffff"
 };
@@ -1242,7 +1242,12 @@ function styleBasemap(m){
       else if(t === "fill"){
         if(sl === "water") m.setPaintProperty(id, "fill-color", PAL.water);
         else if(sl === "park" || /wood|grass|landcover|park/i.test(id)) m.setPaintProperty(id, "fill-color", PAL.park);
-        else if(sl === "building") m.setPaintProperty(id, "fill-color", PAL.building);
+        else if(sl === "building"){
+          m.setPaintProperty(id, "fill-color", PAL.building);
+          // outline only appears once you're zoomed in close — fades out by z14
+          m.setPaintProperty(id, "fill-outline-color",
+            ["interpolate", ["linear"], ["zoom"], 14, "rgba(0,0,0,0)", 16, PAL.bldgLine]);
+        }
         else if(sl === "landuse") m.setPaintProperty(id, "fill-color", PAL.landuse);
       } else if(t === "line"){
         if(sl === "water" || sl === "waterway") m.setPaintProperty(id, "line-color", PAL.water);
@@ -1291,7 +1296,6 @@ function popupHtml(p){
   const photo = p.photo ? `<img class="photo" src="${p.photo}" alt="" loading="lazy">` : "";
   const feat = p.feat ? `<div class="feat">🏅 ${esc(p.feat)}</div>` : "";
   const known = p.known ? `<div class="known"><b>Known for:</b> ${esc(p.known)}</div>` : "";
-  const why = p.why ? `<div class="why">“${esc(p.why)}”</div>` : "";
   const price = p.price ? ` · ${esc(p.price)}` : "";
   const stars = p.rating ? ` · ★ ${p.rating}${p.pop ? " (" + fmtCount(p.pop) + ")" : ""}` : "";
   const on = VISITED[pkey(p)] ? " on" : "";
@@ -1300,7 +1304,7 @@ function popupHtml(p){
     <span class="tag ${p.type}">${p.emoji} ${p.type}</span>
     <h3>${esc(p.name)}</h3>
     <div class="meta">${esc(p.cat)}${price}${stars}</div>
-    ${feat}${known}${why}
+    ${feat}${known}
     <div class="addr">${esc(p.addr)}</div>
     <button class="visited-btn${on}" data-k="${esc(pkey(p))}">
       <span class="box">${on ? "✓" : ""}</span><span class="lab">${on ? "Visited" : "Mark visited"}</span>
