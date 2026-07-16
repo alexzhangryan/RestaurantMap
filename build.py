@@ -94,6 +94,66 @@ def classify_type(cat):
         return "See"
     return "Shop"
 
+# coarse "kind" bucket, independent of Eat/Shop/See — first match wins
+KIND_RULES = [
+    (r"Bakery Cafe|Themed Cafe|Internet Cafe|Coffee Shop|\bCafe\b", "Cafe"),
+    (r"Bakery|Cake Shop|Confectionery|Pastry Shop|Patisserie|Donut Shop", "Bakery"),
+    (r"Ice Cream|Gelato|Frozen Yogurt|Shaved Ice|Snow Shop|Dessert Shop", "Dessert"),
+    (r"Bubble Tea|Juice and Smoothie|Tea Room", "Drinks"),
+    (r"Izakaya", "Bar"),
+    (r"BBQ", "BBQ"),
+    (r"Food Court|Street Food", "Fast Food"),
+    (r"Farmers Market|Grocery Store", "Market"),
+    (r"Restaurant|Cuisine|Bistro|Steakhouse|Soul Food|Sandwich Shop", "Restaurant"),
+    (r"Hair Salon|Cosmetics Store|Perfume Store", "Beauty"),
+    (r"Outdoor Sports Store|Sporting Goods Store", "Sporting Goods"),
+    (r"Clothing Store|Fashion Accessory|Shoe Store|Sunglasses Store|Sportswear|Skate Shop|Thrift Store", "Clothing"),
+    (r"Toy Store|Collectibles Store|Pop-Up Shop|Jewelry Store|Vitamin and Supplement", "Specialty Shop"),
+    (r"Department Store|Shopping Center|Shopping Mall", "Shopping Center"),
+    (r"Japanese Garden", "Garden & Park"),
+    (r"Hotel", "Hotel"),
+    (r"Museum|Art Studio|Historic Place|Unincorporated Community", "Landmark"),
+]
+
+# cuisine tag — only meaningful for food places; empty string when not applicable
+CUISINE_RULES = [
+    (r"Korean BBQ Restaurant|Korean Cuisine", "Korean"),
+    (r"Izakaya|Japanese Cuisine|Conveyor-Belt Sushi|Temaki Sushi|Sushi Restaurant|Ramen Restaurant|Udon Restaurant", "Japanese"),
+    (r"Cantonese Cuisine|Chinese Cuisine|Szechuan Cuisine|Dim Sum Restaurant|Hot Pot Restaurant|Dumpling Restaurant", "Chinese"),
+    (r"Taiwanese Cuisine", "Taiwanese"),
+    (r"Thai Cuisine", "Thai"),
+    (r"Vietnamese Cuisine", "Vietnamese"),
+    (r"Malaysian Cuisine", "Malaysian"),
+    (r"Asian Fusion Cuisine", "Asian Fusion"),
+    (r"Asian Cuisine", "Asian"),
+    (r"Indian Cuisine|Pakistani Cuisine", "Indian/Pakistani"),
+    (r"Italian Cuisine|Neapolitan Pizza Restaurant|Pizza Restaurant", "Italian"),
+    (r"French Cuisine", "French"),
+    (r"Greek Cuisine", "Greek"),
+    (r"Mediterranean Cuisine", "Mediterranean"),
+    (r"Middle Eastern Cuisine", "Middle Eastern"),
+    (r"Mexican Cuisine|Taco Restaurant", "Mexican"),
+    (r"Peruvian Cuisine", "Peruvian"),
+    (r"Hawaiian Cuisine|Poke Restaurant", "Hawaiian"),
+    (r"Soul Food Restaurant", "Soul Food"),
+    (r"BBQ Restaurant", "BBQ"),
+    (r"Steakhouse", "Steakhouse"),
+    (r"Seafood Restaurant", "Seafood"),
+    (r"American Cuisine|Burger Restaurant|Sandwich Shop|Waffle Restaurant", "American"),
+]
+
+def kind_for(cat):
+    for pat, k in KIND_RULES:
+        if re.search(pat, cat, re.I):
+            return k
+    return "Other"
+
+def cuisine_for(cat):
+    for pat, c in CUISINE_RULES:
+        if re.search(pat, cat, re.I):
+            return c
+    return ""
+
 def emoji_for(cat):
     for pat, e in EMOJI:
         if re.search(pat, cat, re.I):
@@ -113,11 +173,25 @@ def slug(name, lat, lng):
     return f"{s}-{round(lat, 4)}_{round(lng, 4)}"
 
 PHOTO_DIR = os.path.join(HERE, "photos")
+GALLERY_DIR = os.path.join(HERE, "gallery")
 
 def photo_for(name, lat, lng):
     """Relative URL if a cached photo exists (from fetch_photos.py), else ''."""
     fn = slug(name, lat, lng) + ".jpg"
     return f"photos/{fn}" if os.path.exists(os.path.join(PHOTO_DIR, fn)) else ""
+
+def gallery_for(name, lat, lng):
+    """Ordered photo list: the food cover first, then extra shots (Google order)."""
+    sl = slug(name, lat, lng)
+    out = []
+    cover = photo_for(name, lat, lng)
+    if cover:
+        out.append(cover)
+    for i in range(2, 12):
+        fn = f"{sl}-{i}.jpg"
+        if os.path.exists(os.path.join(GALLERY_DIR, fn)):
+            out.append(f"gallery/{fn}")
+    return out
 
 # ---- enrichment -------------------------------------------------------------
 # enrich.tsv (authored blurbs): slug, known, why, emoji
@@ -141,6 +215,30 @@ if os.path.exists(featured_path):
     with open(featured_path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f, delimiter="\t"):
             ENRICH.setdefault(row["slug"], {})["feat"] = row["feat"]
+
+# hours (from fetch_enrich.py --hours, cached in details/*.json). Compact form
+# per place: "24" for a place open 24/7, else a list of [openDay, openH, openM,
+# closeDay, closeH, closeM] periods (closeDay may be openDay+1 for overnight hours).
+HOURS = {}
+DETAILS_DIR = os.path.join(HERE, "details")
+if os.path.isdir(DETAILS_DIR):
+    for fn in os.listdir(DETAILS_DIR):
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(DETAILS_DIR, fn), encoding="utf-8") as f:
+                d = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        periods = (d.get("regularOpeningHours") or {}).get("periods") or []
+        if any("close" not in p for p in periods):
+            HOURS[fn[:-5]] = "24"
+        elif periods:
+            HOURS[fn[:-5]] = [
+                [p["open"]["day"], p["open"]["hour"], p["open"].get("minute", 0),
+                 p["close"]["day"], p["close"]["hour"], p["close"].get("minute", 0)]
+                for p in periods
+            ]
 
 # ---- load -------------------------------------------------------------------
 places = []
@@ -170,15 +268,19 @@ with open(TSV, newline="", encoding="utf-8") as f:
             "city": city,
             "region": region,
             "type": classify_type(cat),
+            "kind": kind_for(cat),
+            "cuisine": cuisine_for(cat),
             # per-place icon from the enrichment pass (tailored to the signature
             # dish) wins over the coarse category fallback
             "emoji": (en.get("emoji") or "").strip() or emoji_for(cat),
             "photo": photo_for(name, lat, lng),
+            "gallery": gallery_for(name, lat, lng),
             "known": (en.get("known") or row.get("known") or "").strip(),
             "why": (en.get("why") or row.get("why") or "").strip(),
             "feat": (en.get("feat") or "").strip(),
             "rating": (en.get("rating") or "").strip(),
             "pop": pop,
+            "hours": HOURS.get(slug(name, lat, lng), []),
         })
 
 places.sort(key=lambda p: (p["region"], p["city"], p["name"]))
@@ -237,17 +339,48 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
   border-radius:14px;padding:11px 14px;box-shadow:var(--shadow)}
 .search input{border:0;outline:0;background:transparent;color:var(--ink);font-size:16px;width:100%}
 .search svg{flex:0 0 auto;opacity:.5}
-.count{font-size:12px;color:var(--sub);padding:0 4px;white-space:nowrap}
-.chips{display:flex;gap:8px;margin-top:10px;overflow-x:auto;pointer-events:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px}
-.chips::-webkit-scrollbar{display:none}
-.chip{flex:0 0 auto;border:1px solid var(--line);background:var(--panel);color:var(--ink);
-  border-radius:999px;padding:7px 13px;font-size:13px;font-weight:600;box-shadow:var(--shadow);cursor:pointer;user-select:none;
-  display:flex;align-items:center;gap:6px;transition:transform .06s}
-.chip:active{transform:scale(.96)}
-.chip[aria-pressed="true"].eat{background:var(--eat);border-color:var(--eat);color:#fff}
-.chip[aria-pressed="true"].shop{background:var(--shop);border-color:var(--shop);color:#fff}
-.chip[aria-pressed="true"].see{background:var(--see);border-color:var(--see);color:#fff}
-.chip[aria-pressed="true"].region{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.count{font-size:12px;color:var(--sub);padding:0 2px;white-space:nowrap;margin-top:9px;pointer-events:none}
+
+/* filters button (opens the bottom sheet) */
+.filterbtn{position:relative;flex:0 0 auto;width:44px;height:44px;border-radius:14px;background:var(--panel);
+  border:1px solid var(--line);box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center;
+  cursor:pointer;color:var(--ink);pointer-events:auto}
+.filterbtn:active{transform:scale(.94)}
+.filterbtn .badge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;padding:0 4px;
+  border-radius:9px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;line-height:18px;
+  text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.4);border:1.5px solid var(--bg)}
+
+/* filters bottom sheet */
+#fsheet{position:fixed;inset:0;z-index:3000;display:none}
+#fsheet.open{display:block}
+#fsheet .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.4)}
+#fsheet .sheet{position:absolute;left:0;right:0;bottom:0;max-height:82vh;display:flex;flex-direction:column;
+  background:var(--panel);border-radius:20px 20px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.3)}
+#fsheet .fhead{display:flex;align-items:center;justify-content:space-between;padding:14px 8px 12px 18px;
+  border-bottom:1px solid var(--line)}
+#fsheet .fhead h2{margin:0;font-size:16px}
+#fsheet .fclear{background:none;border:0;color:var(--accent);font-size:14px;font-weight:600;cursor:pointer;padding:6px 4px}
+#fsheet .fclose{background:none;border:0;color:var(--sub);font-size:20px;cursor:pointer;padding:4px 10px}
+#fsheet .fbody{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 18px 6px}
+.fsec{margin-bottom:20px}
+.fsec h3{margin:0 0 9px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--sub)}
+.fchips{display:flex;flex-wrap:wrap;gap:8px}
+.fchip{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:999px;
+  padding:7px 13px;font-size:13px;font-weight:600;cursor:pointer;user-select:none}
+.fchip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.fchip.eat[aria-pressed="true"]{background:var(--eat);border-color:var(--eat);color:#fff}
+.fchip.shop[aria-pressed="true"]{background:var(--shop);border-color:var(--shop);color:#fff}
+.fchip.see[aria-pressed="true"]{background:var(--see);border-color:var(--see);color:#fff}
+.hourrow{display:flex;flex-direction:column;gap:2px}
+.hropt{display:flex;align-items:center;gap:10px;padding:8px 2px;font-size:14px;cursor:pointer}
+.hropt input{width:17px;height:17px;accent-color:var(--accent)}
+.pickrow{display:flex;gap:8px;margin:2px 0 6px 27px}
+.pickrow select, .pickrow input{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--ink);
+  border-radius:8px;padding:8px;font-size:13px;min-width:0}
+#fsheet .ffoot{padding:10px 18px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
+.fapply{display:block;width:100%;text-align:center;padding:13px;border-radius:12px;border:0;
+  background:var(--accent);color:#fff;font-weight:700;font-size:15px;cursor:pointer}
+.fapply:active{transform:scale(.98)}
 
 /* marker + always-on label */
 .mk{position:relative;width:22px;height:22px}
@@ -284,8 +417,27 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .leaflet-popup-content-wrapper{border-radius:16px;box-shadow:var(--shadow);background:var(--panel);color:var(--ink)}
 .leaflet-popup-content{margin:14px 16px;font-size:14px;line-height:1.4}
 .leaflet-popup-tip{background:var(--panel)}
-.card .photo{width:100%;height:132px;object-fit:cover;border-radius:12px;margin:0 0 10px;
-  display:block;background:var(--line)}
+.card .photowrap{position:relative;margin:0 0 10px;cursor:zoom-in}
+.card .photo{width:100%;height:132px;object-fit:cover;border-radius:12px;display:block;background:var(--line)}
+.card .pcount{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.62);color:#fff;
+  font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;backdrop-filter:blur(2px)}
+
+/* photo viewer: a centered card overlaid on the (dimmed) map, not edge-to-edge */
+#viewer{position:fixed;inset:0;z-index:4000;background:rgba(0,0,0,.55);
+  display:none;align-items:center;justify-content:center;padding:24px}
+#viewer.open{display:flex}
+#vbox{position:relative;width:min(94vw,520px);height:min(70vh,640px);
+  background:#000;border-radius:18px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+#vtrack{position:absolute;inset:0;display:flex;overflow-x:auto;overflow-y:hidden;
+  scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+#vtrack::-webkit-scrollbar{display:none}
+#vtrack img{flex:0 0 100%;width:100%;height:100%;object-fit:contain;scroll-snap-align:center;background:#000}
+#vclose{position:absolute;top:10px;right:10px;z-index:2;
+  width:32px;height:32px;border-radius:50%;border:0;background:rgba(0,0,0,.55);color:#fff;
+  font-size:17px;line-height:32px;text-align:center;cursor:pointer}
+#vcount{position:absolute;left:50%;transform:translateX(-50%);bottom:12px;z-index:2;
+  color:#fff;font-size:12px;font-weight:600;background:rgba(0,0,0,.55);
+  padding:4px 11px;border-radius:999px;pointer-events:none}
 .card h3{margin:0 0 2px;font-size:17px;letter-spacing:-.01em}
 .card .meta{color:var(--sub);font-size:13px;margin-bottom:6px}
 .card .addr{color:var(--sub);font-size:12px;margin:6px 0 10px}
@@ -327,18 +479,81 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input id="q" type="search" placeholder="Search my places…" autocomplete="off">
     </label>
-    <span class="count" id="count"></span>
+    <div class="filterbtn" id="filterBtn" title="Filters">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M7 12h10M10 19h4"/></svg>
+      <span class="badge" id="filterBadge" hidden>0</span>
+    </div>
   </div>
-  <div class="chips" id="chips">
-    <div class="chip eat" data-type="Eat" aria-pressed="true">🍴 Eat</div>
-    <div class="chip shop" data-type="Shop" aria-pressed="false">🛍️ Shop</div>
-    <div class="chip see" data-type="See" aria-pressed="false">🎡 See</div>
-    <div class="chip region" data-region="all" aria-pressed="true">All areas</div>
-    <div class="chip region" data-region="LA / SoCal" aria-pressed="false">LA</div>
-    <div class="chip region" data-region="Bay Area" aria-pressed="false">Bay Area</div>
+  <div class="count" id="count"></div>
+</div>
+<div id="fsheet" aria-hidden="true">
+  <div class="backdrop" id="fsheetBackdrop"></div>
+  <div class="sheet">
+    <div class="fhead">
+      <button class="fclear" id="fclear">Clear all</button>
+      <h2>Filters</h2>
+      <button class="fclose" id="fclose" aria-label="Close">✕</button>
+    </div>
+    <div class="fbody">
+      <div class="fsec">
+        <h3>Type</h3>
+        <div class="fchips" id="fType">
+          <div class="fchip eat" data-type="Eat" aria-pressed="true">🍴 Eat</div>
+          <div class="fchip shop" data-type="Shop" aria-pressed="false">🛍️ Shop</div>
+          <div class="fchip see" data-type="See" aria-pressed="false">🎡 See</div>
+        </div>
+      </div>
+      <div class="fsec">
+        <h3>Region</h3>
+        <div class="fchips" id="fRegion">
+          <div class="fchip" data-region="all" aria-pressed="true">All areas</div>
+          <div class="fchip" data-region="LA / SoCal" aria-pressed="false">LA</div>
+          <div class="fchip" data-region="Bay Area" aria-pressed="false">Bay Area</div>
+        </div>
+      </div>
+      <div class="fsec">
+        <h3>Hours</h3>
+        <div class="hourrow" id="fHours">
+          <label class="hropt"><input type="radio" name="hmode" value="any" checked> Any time</label>
+          <label class="hropt"><input type="radio" name="hmode" value="now"> Open now</label>
+          <label class="hropt"><input type="radio" name="hmode" value="pick"> Pick a day &amp; time</label>
+          <div class="pickrow" id="fPickRow" hidden>
+            <select id="fDay">
+              <option value="today">Today</option>
+              <option value="0">Sunday</option>
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6">Saturday</option>
+            </select>
+            <input type="time" id="fTime" value="18:00">
+          </div>
+        </div>
+      </div>
+      <div class="fsec">
+        <h3>Cuisine</h3>
+        <div class="fchips" id="fCuisine"></div>
+      </div>
+      <div class="fsec">
+        <h3>Category</h3>
+        <div class="fchips" id="fKind"></div>
+      </div>
+    </div>
+    <div class="ffoot">
+      <button class="fapply" id="fapply">Show places</button>
+    </div>
   </div>
 </div>
 <div class="locate" id="locate" title="Near me">◎</div>
+<div id="viewer" aria-hidden="true">
+  <div id="vbox">
+    <div id="vtrack"></div>
+    <button id="vclose" aria-label="Close">✕</button>
+    <div id="vcount"></div>
+  </div>
+</div>
 
 <script>
 // --- leaflet.js (vendored, inlined) ---
@@ -361,9 +576,17 @@ const PLACES = __DATA__;
 const TYPE_ON = {Eat:true, Shop:false, See:false};
 let REGION = "all";
 let QUERY = "";
+let CUISINE_ON = new Set();   // empty = any cuisine
+let KIND_ON = new Set();      // empty = any category
+let HOURS_MODE = "any";       // any | now | pick
+let PICK_DAY = "today";       // "today" or 0-6 (0=Sunday, matches Date#getDay)
+let PICK_TIME = "18:00";
 let VIS = [];   // markers currently shown (set each render, used by declutter)
 
 // --- visited state (saved on THIS device only) ---
+// Ask the browser to keep our storage (iOS can evict localStorage for
+// home-screen web apps otherwise — the usual cause of "visited resets").
+try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch(e){}
 const VKEY = "visited_v1";
 let VISITED = {};
 try { VISITED = JSON.parse(localStorage.getItem(VKEY) || "{}"); } catch(e){}
@@ -457,7 +680,11 @@ function gmapUrl(p){ return `https://www.google.com/maps/search/?api=1&query=${p
 
 function fmtCount(n){ return n >= 1000 ? (n/1000).toFixed(1).replace(/\.0$/,"") + "k" : "" + n; }
 function popupHtml(p){
-  const photo = p.photo ? `<img class="photo" src="${p.photo}" alt="" loading="lazy">` : "";
+  const nphotos = (p.gallery && p.gallery.length) || (p.photo ? 1 : 0);
+  const badge = nphotos > 1 ? `<span class="pcount">▦ ${nphotos}</span>` : "";
+  const photo = p.photo
+    ? `<div class="photowrap" data-k="${esc(pkey(p))}"><img class="photo" src="${p.photo}" alt="" loading="lazy">${badge}</div>`
+    : "";
   const feat = p.feat ? `<div class="feat">🏅 ${esc(p.feat)}</div>` : "";
   const known = p.known ? `<div class="known"><b>Known for:</b> ${esc(p.known)}</div>` : "";
   const price = p.price ? ` · ${esc(p.price)}` : "";
@@ -491,10 +718,59 @@ const byKey = {};
 const markers = PLACES.map(p => {
   const m = L.marker([p.lat,p.lng], {icon: iconFor(p)});
   m.__p = p;
-  m.bindPopup(popupHtml(p), {maxWidth:300, minWidth:230});
+  m.bindPopup(popupHtml(p), {maxWidth:300, minWidth:230, autoPan:false});
   byKey[pkey(p)] = m;
   return m;
 });
+
+// --- hours filtering: periods are [openDay,openH,openM,closeDay,closeH,closeM]
+// in Google's weekday convention (0=Sunday, matches Date#getDay). Checking the
+// query instant against 3 week-shifted copies of each period handles the one
+// case that needs it: hours that wrap past midnight into the next day.
+function isOpenAt(hours, dayIdx, mins){
+  if (hours === "24") return true;
+  if (!hours || !hours.length) return false;
+  const q = dayIdx * 1440 + mins;
+  for (const per of hours){
+    const start = per[0]*1440 + per[1]*60 + per[2];
+    let end = per[3]*1440 + per[4]*60 + per[5];
+    if (end <= start) end += 10080;   // overnight wrap (e.g. 6pm–2am)
+    for (const qq of [q, q + 10080, q - 10080]){
+      if (qq >= start && qq < end) return true;
+    }
+  }
+  return false;
+}
+function hoursMatch(p){
+  if (HOURS_MODE === "any") return true;
+  const now = new Date();
+  let dayIdx, mins;
+  if (HOURS_MODE === "now"){
+    dayIdx = now.getDay(); mins = now.getHours()*60 + now.getMinutes();
+  } else {
+    dayIdx = PICK_DAY === "today" ? now.getDay() : parseInt(PICK_DAY, 10);
+    const [hh, mm] = (PICK_TIME || "00:00").split(":").map(Number);
+    mins = hh*60 + (mm || 0);
+  }
+  return isOpenAt(p.hours, dayIdx, mins);
+}
+
+function activeFilterCount(){
+  let n = 0;
+  const defaultType = TYPE_ON.Eat && !TYPE_ON.Shop && !TYPE_ON.See;
+  if (!defaultType) n++;
+  if (REGION !== "all") n++;
+  if (CUISINE_ON.size) n++;
+  if (KIND_ON.size) n++;
+  if (HOURS_MODE !== "any") n++;
+  return n;
+}
+function updateFilterBadge(){
+  const n = activeFilterCount();
+  const b = document.getElementById("filterBadge");
+  b.hidden = n === 0;
+  if (n) b.textContent = n;
+}
 
 function render(){
   cluster.clearLayers();
@@ -505,12 +781,16 @@ function render(){
     const p = m.__p;
     if (!TYPE_ON[p.type]) continue;
     if (REGION !== "all" && p.region !== REGION) continue;
+    if (CUISINE_ON.size && !CUISINE_ON.has(p.cuisine)) continue;
+    if (KIND_ON.size && !KIND_ON.has(p.kind)) continue;
+    if (!hoursMatch(p)) continue;
     if (q && !(p.name.toLowerCase().includes(q) || p.cat.toLowerCase().includes(q) || p.city.toLowerCase().includes(q))) continue;
     vis.push(m); shown++;
   }
   VIS = vis;
   cluster.addLayers(vis);
   document.getElementById("count").textContent = shown + " places";
+  updateFilterBadge();
   scheduleDeclutter();
 }
 
@@ -559,19 +839,84 @@ function scheduleDeclutter(){
 map.on("zoomend moveend", scheduleDeclutter);
 cluster.on("animationend", scheduleDeclutter);
 
-// chips
-document.getElementById("chips").addEventListener("click", e => {
-  const chip = e.target.closest(".chip"); if(!chip) return;
-  if (chip.dataset.type){
-    const t = chip.dataset.type; TYPE_ON[t] = !TYPE_ON[t];
-    chip.setAttribute("aria-pressed", TYPE_ON[t]);
-  } else if (chip.dataset.region){
-    REGION = chip.dataset.region;
-    document.querySelectorAll(".chip.region").forEach(c =>
-      c.setAttribute("aria-pressed", c.dataset.region === REGION));
-  }
+// When a place is opened, slide the map so the whole expanded card is centered
+map.on("popupopen", e => {
+  const el = e.popup.getElement();
+  if (!el) return;
+  const sz = map.getSize();
+  const target = L.point(sz.x/2, Math.min(sz.y/2 + el.offsetHeight/2, sz.y - 40));
+  const d = map.latLngToContainerPoint(e.popup._latlng).subtract(target);
+  if (Math.abs(d.x) > 2 || Math.abs(d.y) > 2) map.panBy(d, {animate:true, duration:0.3});
+});
+
+// --- filters bottom sheet ---
+const CUISINES = [...new Set(PLACES.map(p => p.cuisine).filter(Boolean))].sort();
+const KINDS = [...new Set(PLACES.map(p => p.kind))].sort();
+document.getElementById("fCuisine").innerHTML = CUISINES.map(c =>
+  `<div class="fchip" data-cuisine="${esc(c)}" aria-pressed="false">${esc(c)}</div>`).join("");
+document.getElementById("fKind").innerHTML = KINDS.map(k =>
+  `<div class="fchip" data-kind="${esc(k)}" aria-pressed="false">${esc(k)}</div>`).join("");
+
+const fsheet = document.getElementById("fsheet");
+function openSheet(){ fsheet.classList.add("open"); fsheet.setAttribute("aria-hidden", "false"); }
+function closeSheet(){ fsheet.classList.remove("open"); fsheet.setAttribute("aria-hidden", "true"); }
+document.getElementById("filterBtn").addEventListener("click", openSheet);
+document.getElementById("fclose").addEventListener("click", closeSheet);
+document.getElementById("fsheetBackdrop").addEventListener("click", closeSheet);
+document.getElementById("fapply").addEventListener("click", closeSheet);
+
+function syncSheetUI(){
+  document.querySelectorAll("#fType .fchip").forEach(c => c.setAttribute("aria-pressed", TYPE_ON[c.dataset.type]));
+  document.querySelectorAll("#fRegion .fchip").forEach(c => c.setAttribute("aria-pressed", c.dataset.region === REGION));
+  document.querySelectorAll("#fCuisine .fchip").forEach(c => c.setAttribute("aria-pressed", CUISINE_ON.has(c.dataset.cuisine)));
+  document.querySelectorAll("#fKind .fchip").forEach(c => c.setAttribute("aria-pressed", KIND_ON.has(c.dataset.kind)));
+  document.querySelector(`input[name="hmode"][value="${HOURS_MODE}"]`).checked = true;
+  document.getElementById("fPickRow").hidden = HOURS_MODE !== "pick";
+  document.getElementById("fDay").value = PICK_DAY;
+  document.getElementById("fTime").value = PICK_TIME;
+}
+
+document.getElementById("fclear").addEventListener("click", () => {
+  TYPE_ON.Eat = true; TYPE_ON.Shop = false; TYPE_ON.See = false;
+  REGION = "all"; CUISINE_ON.clear(); KIND_ON.clear();
+  HOURS_MODE = "any"; PICK_DAY = "today"; PICK_TIME = "18:00";
+  syncSheetUI();
   render();
 });
+document.getElementById("fType").addEventListener("click", e => {
+  const c = e.target.closest(".fchip"); if(!c) return;
+  const t = c.dataset.type; TYPE_ON[t] = !TYPE_ON[t];
+  c.setAttribute("aria-pressed", TYPE_ON[t]);
+  render();
+});
+document.getElementById("fRegion").addEventListener("click", e => {
+  const c = e.target.closest(".fchip"); if(!c) return;
+  REGION = c.dataset.region;
+  document.querySelectorAll("#fRegion .fchip").forEach(x => x.setAttribute("aria-pressed", x.dataset.region === REGION));
+  render();
+});
+document.getElementById("fCuisine").addEventListener("click", e => {
+  const c = e.target.closest(".fchip"); if(!c) return;
+  const v = c.dataset.cuisine;
+  if (CUISINE_ON.has(v)) CUISINE_ON.delete(v); else CUISINE_ON.add(v);
+  c.setAttribute("aria-pressed", CUISINE_ON.has(v));
+  render();
+});
+document.getElementById("fKind").addEventListener("click", e => {
+  const c = e.target.closest(".fchip"); if(!c) return;
+  const v = c.dataset.kind;
+  if (KIND_ON.has(v)) KIND_ON.delete(v); else KIND_ON.add(v);
+  c.setAttribute("aria-pressed", KIND_ON.has(v));
+  render();
+});
+document.querySelectorAll('input[name="hmode"]').forEach(r => r.addEventListener("change", e => {
+  HOURS_MODE = e.target.value;
+  document.getElementById("fPickRow").hidden = HOURS_MODE !== "pick";
+  render();
+}));
+document.getElementById("fDay").addEventListener("change", e => { PICK_DAY = e.target.value; if (HOURS_MODE === "pick") render(); });
+document.getElementById("fTime").addEventListener("change", e => { PICK_TIME = e.target.value; if (HOURS_MODE === "pick") render(); });
+
 document.getElementById("q").addEventListener("input", e => { QUERY = e.target.value; render(); });
 
 // visited toggle (inside popups) — flips the on-device flag + pin outline to green
@@ -585,6 +930,33 @@ document.addEventListener("click", e => {
   b.querySelector(".lab").textContent = now ? "Visited" : "Mark visited";
   const m = byKey[k], el = m && m.getElement();
   if (el){ const mk = el.querySelector(".mk"); if (mk) mk.classList.toggle("visited", now); }
+});
+
+// --- fullscreen swipe photo viewer ---
+const viewer = document.getElementById("viewer");
+const vtrack = document.getElementById("vtrack");
+const vcount = document.getElementById("vcount");
+function updateVCount(n){ vcount.textContent = (Math.round(vtrack.scrollLeft / vtrack.clientWidth) + 1) + " / " + n; }
+function openViewer(list, start){
+  if (!list || !list.length) return;
+  vtrack.innerHTML = list.map(src => `<img src="${src}" alt="">`).join("");
+  viewer.classList.add("open");
+  const n = list.length;
+  requestAnimationFrame(() => { vtrack.scrollLeft = (start || 0) * vtrack.clientWidth; updateVCount(n); });
+  vtrack.onscroll = () => updateVCount(n);
+}
+function closeViewer(){ viewer.classList.remove("open"); vtrack.innerHTML = ""; vtrack.onscroll = null; }
+document.getElementById("vclose").addEventListener("click", closeViewer);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeViewer(); });
+// tapping the dimmed backdrop (outside the photo card) closes it
+viewer.addEventListener("click", e => { if (e.target === viewer) closeViewer(); });
+// open the viewer from a card's photo
+document.addEventListener("click", e => {
+  const w = e.target.closest(".photowrap"); if (!w) return;
+  const m = byKey[w.dataset.k]; if (!m) return;
+  const g = (m.__p.gallery && m.__p.gallery.length) ? m.__p.gallery
+          : (m.__p.photo ? [m.__p.photo] : []);
+  openViewer(g, 0);
 });
 
 // locate + orientation cone ("where I'm looking")
@@ -658,11 +1030,13 @@ for out in (OUT, os.path.join(deploy_dir, "index.html")):
         f.write(html)
     print(f"Wrote {out} ({kb} KB, self-contained — 1 request)")
 
-# Mirror cached photos into deploy/ so the served build can show them.
-if os.path.isdir(PHOTO_DIR):
-    dst = os.path.join(deploy_dir, "photos")
-    shutil.copytree(PHOTO_DIR, dst, dirs_exist_ok=True)
-    n = len([f for f in os.listdir(PHOTO_DIR) if f.endswith(".jpg")])
-    print(f"Copied {n} photos -> {dst}")
-else:
+# Mirror cached photos + gallery into deploy/ so the served build can show them.
+for name in ("photos", "gallery"):
+    src = os.path.join(HERE, name)
+    if os.path.isdir(src):
+        dst = os.path.join(deploy_dir, name)
+        shutil.copytree(src, dst, dirs_exist_ok=True)
+        n = len([f for f in os.listdir(src) if f.endswith(".jpg")])
+        print(f"Copied {n} {name} -> {dst}")
+if not os.path.isdir(PHOTO_DIR):
     print("No photos/ yet — run fetch_photos.py to add food photos (see README).")

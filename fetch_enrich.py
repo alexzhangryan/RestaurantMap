@@ -12,6 +12,7 @@ Usage:
     python3 fetch_enrich.py --limit 3      # smoke test
     python3 fetch_enrich.py                # fetch all (skips cached)
     python3 fetch_enrich.py --digest       # build digests.tsv from cache
+    python3 fetch_enrich.py --hours        # add regularOpeningHours to details/*.json
     python3 fetch_enrich.py --candidates 3 --only flagged.txt
                                            # download alt photos 2..4 for slugs
                                            # listed in flagged.txt
@@ -115,6 +116,49 @@ def fetch_all(limit=None):
     print(f"\nDone. fetched={got} cached={skipped} failed={failed}")
 
 
+def fetch_hours(limit=None):
+    """Add regularOpeningHours to each cached details/*.json via Place Details
+    (New), using the place id already cached from the enrich pass. One GET
+    per place (Basic Data SKU — far cheaper than the Text Search calls above),
+    re-run is free since it skips places that already have hours cached."""
+    rows = load_places()
+    if limit:
+        rows = rows[:limit]
+    got = skipped = failed = no_id = 0
+    for i, (row, lat, lng) in enumerate(rows, 1):
+        name = row["name"].strip()
+        dest = os.path.join(DETAILS_DIR, slug(name, lat, lng) + ".json")
+        if not os.path.exists(dest):
+            no_id += 1
+            continue
+        with open(dest, encoding="utf-8") as f:
+            d = json.load(f)
+        if "regularOpeningHours" in d:
+            skipped += 1
+            continue
+        pid = d.get("id")
+        if not pid:
+            no_id += 1
+            continue
+        url = f"https://places.googleapis.com/v1/places/{pid}"
+        headers = {"X-Goog-Api-Key": KEY, "X-Goog-FieldMask": "regularOpeningHours"}
+        try:
+            req = urllib.request.Request(url, headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=30) as r:
+                res = json.load(r)
+            d["regularOpeningHours"] = res.get("regularOpeningHours", {})
+            with open(dest, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False)
+            got += 1
+            print(f"[{i}/{len(rows)}] ok: {name}")
+        except Exception as e:  # noqa: BLE001 — keep going
+            failed += 1
+            msg = e.read()[:150] if isinstance(e, urllib.error.HTTPError) else e
+            print(f"[{i}/{len(rows)}] FAIL {name}: {msg}")
+        time.sleep(0.12)
+    print(f"\nDone. fetched={got} cached={skipped} failed={failed} no_id={no_id}")
+
+
 def clean(s, n):
     """One line, no tabs, truncated."""
     s = re.sub(r"\s+", " ", s or "").strip()
@@ -188,6 +232,9 @@ if __name__ == "__main__":
         sys.exit("ERROR: no Google API key found (env or .env).")
     if "--digest" in sys.argv:
         digest()
+    elif "--hours" in sys.argv:
+        limit = int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else None
+        fetch_hours(limit)
     elif "--candidates" in sys.argv:
         n = int(sys.argv[sys.argv.index("--candidates") + 1])
         only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None

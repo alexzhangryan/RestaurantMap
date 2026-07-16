@@ -1,1 +1,1 @@
-{"id": "ChIJ22sWCgDHwoARZgaiVINoPIw", "displayName": {"text": "Miya Miya", "languageCode": "en"}}
+{"id": "ChIJ22sWCgDHwoARZgaiVINoPIw", "displayName": {"text": "Miya Miya", "languageCode": "en"}, "regularOpeningHours": {"openNow": false, "periods": [{"open": {"day": 0, "hour": 10, "minute": 0}, "close": {"day": 0, "hour": 16, "minute": 0}}], "weekdayDescriptions": ["Monday: Closed", "Tuesday: Closed", "Wednesday: Closed", "Thursday: Closed", "Friday: Closed", "Saturday: Closed", "Sunday: 10:00 AM – 4:00 PM"], "nextOpenTime": "2026-07-19T17:00:00Z"}}
