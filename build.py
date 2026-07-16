@@ -700,6 +700,13 @@ glMap.on("load", () => styleBasemap(glMap));
 
 const cluster = L.markerClusterGroup({
   maxClusterRadius:22, spiderfyOnMaxZoom:true, showCoverageOnHover:false,
+  // Leaflet.markercluster defaults to removing markers/clusters outside the
+  // viewport and only recomputing on moveend — with only ~300 pins total
+  // (not the tens-of-thousands this default is meant for) that trade is pure
+  // loss: it's what causes pins to "pop in" once you stop panning. Keeping
+  // everything always mounted costs a few hundred DOM nodes and buys smooth
+  // panning with zero pop-in.
+  removeOutsideVisibleBounds:false,
   // Don't hide everything behind a number bubble: show the most popular place's pin,
   // with a small "+N" for how many others are stacked under it.
   iconCreateFunction: c => {
