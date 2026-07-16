@@ -950,6 +950,21 @@ document.getElementById("vclose").addEventListener("click", closeViewer);
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeViewer(); });
 // tapping the dimmed backdrop (outside the photo card) closes it
 viewer.addEventListener("click", e => { if (e.target === viewer) closeViewer(); });
+// tapping the letterbox bars around a contain-fit photo LOOKS like backdrop
+// (same black) but is technically still inside the <img> box — treat a tap
+// outside the photo's actual rendered pixels the same as a backdrop tap.
+vtrack.addEventListener("click", e => {
+  const img = e.target.closest("img");
+  if (!img){ closeViewer(); return; }
+  const iw = img.naturalWidth, ih = img.naturalHeight;
+  if (!iw || !ih) return;
+  const r = img.getBoundingClientRect();
+  const scale = Math.min(r.width / iw, r.height / ih);
+  const rw = iw * scale, rh = ih * scale;
+  const offX = (r.width - rw) / 2, offY = (r.height - rh) / 2;
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  if (x < offX || x > offX + rw || y < offY || y > offY + rh) closeViewer();
+});
 // open the viewer from a card's photo
 document.addEventListener("click", e => {
   const w = e.target.closest(".photowrap"); if (!w) return;
