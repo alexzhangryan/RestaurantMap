@@ -422,12 +422,22 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .card .pcount{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.62);color:#fff;
   font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;backdrop-filter:blur(2px)}
 
-/* photo viewer: a centered card overlaid on the (dimmed) map, not edge-to-edge */
-#viewer{position:fixed;inset:0;z-index:4000;background:rgba(0,0,0,.55);
+/* photo viewer: a centered card overlaid on the (dimmed) map, not edge-to-edge.
+   Opens with a scale+fade from the tapped thumbnail's on-screen rect (JS sets the
+   from/to inline transform+opacity+background directly — see openViewer/closeViewer),
+   so it reads as the thumbnail expanding into the full view rather than an abrupt
+   appear; reverses the same way on close. The transition is defined only under
+   no-preference, so prefers-reduced-motion users get an instant snap for free. */
+#viewer{position:fixed;inset:0;z-index:4000;background:rgba(0,0,0,0);
   display:none;align-items:center;justify-content:center;padding:24px}
 #viewer.open{display:flex}
 #vbox{position:relative;width:min(94vw,520px);height:min(70vh,640px);
-  background:#000;border-radius:18px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  background:#000;border-radius:18px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5);
+  opacity:0}
+@media (prefers-reduced-motion:no-preference){
+  #viewer{transition:background-color .28s ease}
+  #vbox{transition:transform .32s cubic-bezier(.22,.61,.36,1), opacity .28s ease}
+}
 #vtrack{position:absolute;inset:0;display:flex;overflow-x:auto;overflow-y:hidden;
   scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}
 #vtrack::-webkit-scrollbar{display:none}
@@ -615,6 +625,30 @@ const PAL = darkUI ? {
   water:"#a7d3e8", road:"#ffffff", casing:"#dddbd6", boundary:"#ceccc7",
   commercial:"rgba(150,120,205,.32)", label:"#5b6067", halo:"#ffffff"
 };
+
+// PERF: maplibre-gl-leaflet's _pinchZoom calls glMap.jumpTo() — a synchronous
+// full re-render of the vector scene — on every raw Leaflet 'zoom' event. During
+// a touch pinch gesture that event fires once per touchmove, often far faster
+// than the screen can actually paint, so the GL layer was redrawing many more
+// times per second than useful and starving the main thread (measured: 20 rapid
+// zoom events -> 20 redundant jumpTo calls, 1:1, no coalescing). Patch the
+// prototype (before the layer is created, so getEvents() picks it up) to batch
+// same-frame calls via requestAnimationFrame: at most one redraw per frame,
+// always using the latest zoom/center, instead of one per input event.
+(function(){
+  let raf = 0, pendingZoom = null, pendingCenter = null;
+  L.MaplibreGL.prototype._pinchZoom = function(){
+    pendingZoom = this._map.getZoom() - 1;
+    const c = this._map.getCenter();
+    pendingCenter = [c.lng, c.lat];
+    if (raf) return;
+    const gl = this._glMap;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      gl.jumpTo({ zoom: pendingZoom, center: pendingCenter });
+    });
+  };
+})();
 
 const glLayer = L.maplibreGL({
   style:"https://tiles.openfreemap.org/styles/positron",
@@ -934,18 +968,64 @@ document.addEventListener("click", e => {
 
 // --- fullscreen swipe photo viewer ---
 const viewer = document.getElementById("viewer");
+const vbox = document.getElementById("vbox");
 const vtrack = document.getElementById("vtrack");
 const vcount = document.getElementById("vcount");
 function updateVCount(n){ vcount.textContent = (Math.round(vtrack.scrollLeft / vtrack.clientWidth) + 1) + " / " + n; }
-function openViewer(list, start){
+
+// shared-element open/close: vbox animates between its natural centered rect
+// and the tapped thumbnail's on-screen rect, so it reads as the thumbnail
+// expanding into the full view (and collapsing back) rather than a hard cut.
+let originRect = null;   // frozen at open time; reused (unchanged) for the close animation
+let closeTimer = 0;
+function transformToRect(from){
+  const to = vbox.getBoundingClientRect();
+  const sx = from.width / to.width, sy = from.height / to.height;
+  const dx = (from.left + from.width / 2) - (to.left + to.width / 2);
+  const dy = (from.top + from.height / 2) - (to.top + to.height / 2);
+  return `translate(${dx}px,${dy}px) scale(${sx},${sy})`;
+}
+function openViewer(list, start, originEl){
   if (!list || !list.length) return;
+  clearTimeout(closeTimer);
   vtrack.innerHTML = list.map(src => `<img src="${src}" alt="">`).join("");
   viewer.classList.add("open");
+  originRect = originEl ? originEl.getBoundingClientRect() : null;
+
+  // jump to the thumbnail-matching pose with transitions off, then let the
+  // next frame transition it to the identity (full, centered) pose
+  vbox.style.transition = "none";
+  vbox.style.transform = originRect ? transformToRect(originRect) : "scale(.85)";
+  vbox.style.opacity = "0";
+  viewer.style.backgroundColor = "rgba(0,0,0,0)";
+  void vbox.offsetHeight;   // force reflow so the jump above doesn't get coalesced into the transition
+  vbox.style.transition = "";
+  requestAnimationFrame(() => {
+    vbox.style.transform = "none";
+    vbox.style.opacity = "1";
+    viewer.style.backgroundColor = "rgba(0,0,0,.55)";
+  });
+
   const n = list.length;
   requestAnimationFrame(() => { vtrack.scrollLeft = (start || 0) * vtrack.clientWidth; updateVCount(n); });
   vtrack.onscroll = () => updateVCount(n);
 }
-function closeViewer(){ viewer.classList.remove("open"); vtrack.innerHTML = ""; vtrack.onscroll = null; }
+function closeViewer(){
+  if (!viewer.classList.contains("open")) return;
+  clearTimeout(closeTimer);
+  vbox.style.transform = originRect ? transformToRect(originRect) : "scale(.85)";
+  vbox.style.opacity = "0";
+  viewer.style.backgroundColor = "rgba(0,0,0,0)";
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  closeTimer = setTimeout(() => {
+    viewer.classList.remove("open");
+    vtrack.innerHTML = ""; vtrack.onscroll = null;
+    vbox.style.transition = "none";
+    vbox.style.transform = ""; vbox.style.opacity = ""; viewer.style.backgroundColor = "";
+    void vbox.offsetHeight;
+    vbox.style.transition = "";
+  }, reduced ? 0 : 320);
+}
 document.getElementById("vclose").addEventListener("click", closeViewer);
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeViewer(); });
 // tapping the dimmed backdrop (outside the photo card) closes it
@@ -971,7 +1051,7 @@ document.addEventListener("click", e => {
   const m = byKey[w.dataset.k]; if (!m) return;
   const g = (m.__p.gallery && m.__p.gallery.length) ? m.__p.gallery
           : (m.__p.photo ? [m.__p.photo] : []);
-  openViewer(g, 0);
+  openViewer(g, 0, w);
 });
 
 // locate + orientation cone ("where I'm looking")
