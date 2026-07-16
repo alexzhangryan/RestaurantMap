@@ -11,6 +11,7 @@ whose current photo needs replacing.
 Usage:
     python3 fetch_enrich.py --limit 3      # smoke test
     python3 fetch_enrich.py                # fetch all (skips cached)
+    python3 fetch_enrich.py --only new.txt # fetch only slugs listed in new.txt
     python3 fetch_enrich.py --digest       # build digests.tsv from cache
     python3 fetch_enrich.py --hours        # add regularOpeningHours to details/*.json
     python3 fetch_enrich.py --candidates 3 --only flagged.txt
@@ -83,9 +84,17 @@ def load_places():
     return rows
 
 
-def fetch_all(limit=None):
+def load_only(only_file):
+    with open(only_file, encoding="utf-8") as f:
+        return {l.strip() for l in f if l.strip()}
+
+
+def fetch_all(limit=None, only_file=None):
     os.makedirs(DETAILS_DIR, exist_ok=True)
     rows = load_places()
+    if only_file:
+        want = load_only(only_file)
+        rows = [r for r in rows if slug(r[0]["name"].strip(), r[1], r[2]) in want]
     if limit:
         rows = rows[:limit]
     got = skipped = failed = 0
@@ -195,10 +204,7 @@ def digest():
 
 def candidates(n, only_file=None):
     os.makedirs(CAND_DIR, exist_ok=True)
-    want = None
-    if only_file:
-        with open(only_file, encoding="utf-8") as f:
-            want = {l.strip() for l in f if l.strip()}
+    want = load_only(only_file) if only_file else None
     rows = load_places()
     got = 0
     for row, lat, lng in rows:
@@ -241,4 +247,5 @@ if __name__ == "__main__":
         candidates(n, only)
     else:
         limit = int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else None
-        fetch_all(limit)
+        only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+        fetch_all(limit, only)

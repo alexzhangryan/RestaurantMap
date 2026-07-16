@@ -608,7 +608,12 @@ const map = L.map("map", {
   // The vector basemap (unlike the old raster layer) doesn't set the map's zoom range;
   // markercluster needs a finite maxZoom to build its grid, so set it here explicitly.
   maxZoom:20, minZoom:3,
-  inertia:true, inertiaDeceleration:2200, inertiaMaxSpeed:3200, easeLinearity:0.22,
+  // Pan-release glide: Leaflet's inertia coasts a distance/duration of
+  // speed/(inertiaDeceleration*easeLinearity) after a flick. Lowering just
+  // inertiaDeceleration (only) scales that uniformly across all flick speeds
+  // without touching the max-speed cap, so hard flicks don't get disproportionately
+  // floaty. 2200->1830 is a ~20% longer coast — noticeably glidier, not overshooty.
+  inertia:true, inertiaDeceleration:1830, inertiaMaxSpeed:3200, easeLinearity:0.22,
 }).setView([34.06,-118.30], 11);
 L.control.zoom({position:"bottomleft"}).addTo(map);
 

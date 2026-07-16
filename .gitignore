@@ -22,3 +22,9 @@ details/
 photos_cand/
 sheets/
 montages/
+
+# favorites-sync + awards pipeline (regenerable)
+live*.json
+new_slugs.txt
+awards_cache/
+awards_review.log
