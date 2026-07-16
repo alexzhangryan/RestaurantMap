@@ -16,3 +16,9 @@ deploy/
 !.dev.vars.example
 .env*
 !.env.example
+
+# enrichment work products (regenerable caches / review artifacts)
+details/
+photos_cand/
+sheets/
+montages/
