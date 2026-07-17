@@ -219,7 +219,12 @@ if os.path.exists(featured_path):
 # hours (from fetch_enrich.py --hours, cached in details/*.json). Compact form
 # per place: "24" for a place open 24/7, else a list of [openDay, openH, openM,
 # closeDay, closeH, closeM] periods (closeDay may be openDay+1 for overnight hours).
+# HOURS_TXT holds Google's own pre-formatted per-day text (Monday-first, e.g.
+# "8:00 AM – 5:00 PM" / "Closed" / "Open 24 hours") for display — reusing it
+# instead of reformatting periods ourselves sidesteps re-deriving overnight-wrap
+# and split-hours edge cases the API already resolved.
 HOURS = {}
+HOURS_TXT = {}
 DETAILS_DIR = os.path.join(HERE, "details")
 if os.path.isdir(DETAILS_DIR):
     for fn in os.listdir(DETAILS_DIR):
@@ -230,7 +235,8 @@ if os.path.isdir(DETAILS_DIR):
                 d = json.load(f)
         except (OSError, json.JSONDecodeError):
             continue
-        periods = (d.get("regularOpeningHours") or {}).get("periods") or []
+        roh = d.get("regularOpeningHours") or {}
+        periods = roh.get("periods") or []
         if any("close" not in p for p in periods):
             HOURS[fn[:-5]] = "24"
         elif periods:
@@ -239,6 +245,9 @@ if os.path.isdir(DETAILS_DIR):
                  p["close"]["day"], p["close"]["hour"], p["close"].get("minute", 0)]
                 for p in periods
             ]
+        wd = roh.get("weekdayDescriptions") or []
+        if len(wd) == 7:
+            HOURS_TXT[fn[:-5]] = [line.split(": ", 1)[1] if ": " in line else line for line in wd]
 
 # ---- load -------------------------------------------------------------------
 places = []
@@ -281,6 +290,7 @@ with open(TSV, newline="", encoding="utf-8") as f:
             "rating": (en.get("rating") or "").strip(),
             "pop": pop,
             "hours": HOURS.get(slug(name, lat, lng), []),
+            "hoursTxt": HOURS_TXT.get(slug(name, lat, lng), []),
         })
 
 places.sort(key=lambda p: (p["region"], p["city"], p["name"]))
@@ -457,6 +467,16 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
   background:color-mix(in srgb,#e6b84c 12%,transparent)}}
 .card .known{margin:6px 0}
 .card .why{margin:6px 0;font-style:italic;color:var(--sub)}
+.hours{margin:6px 0}
+.hours-today{display:flex;align-items:center;gap:6px;width:100%;padding:0;margin:0;
+  border:0;background:transparent;color:var(--ink);font-size:12.5px;font-family:inherit;
+  text-align:left;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.hours-today .chev{margin-left:auto;color:var(--sub);font-size:10px;transition:transform .2s ease}
+.hours.open .hours-today .chev{transform:rotate(180deg)}
+.hours-week{max-height:0;overflow:hidden;transition:max-height .22s ease}
+.hours.open .hours-week{max-height:200px}
+.hrow{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--sub);padding:3px 0 3px 19px}
+.hrow.today{color:var(--ink);font-weight:700}
 .card .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;color:#fff;margin-bottom:6px}
 .tag.Eat{background:var(--eat)} .tag.Shop{background:var(--shop)} .tag.See{background:var(--see)}
 .visited-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin:2px 0 9px;
@@ -612,8 +632,10 @@ const map = L.map("map", {
   // speed/(inertiaDeceleration*easeLinearity) after a flick. Lowering just
   // inertiaDeceleration (only) scales that uniformly across all flick speeds
   // without touching the max-speed cap, so hard flicks don't get disproportionately
-  // floaty. 2200->1830 is a ~20% longer coast — noticeably glidier, not overshooty.
-  inertia:true, inertiaDeceleration:1830, inertiaMaxSpeed:3200, easeLinearity:0.22,
+  // floaty. 1830->1450 is another ~25% longer coast, plus a softer easeLinearity
+  // (rounder deceleration curve, less abrupt stop) and a higher max speed so hard
+  // flicks carry further too — reads as smoother/"slippier" without overshoot.
+  inertia:true, inertiaDeceleration:1450, inertiaMaxSpeed:3600, easeLinearity:0.18,
 }).setView([34.06,-118.30], 11);
 L.control.zoom({position:"bottomleft"}).addTo(map);
 
@@ -725,6 +747,18 @@ function dirUrl(p){ return `https://maps.apple.com/?daddr=${p.lat},${p.lng}&q=${
 function gmapUrl(p){ return `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`; }
 
 function fmtCount(n){ return n >= 1000 ? (n/1000).toFixed(1).replace(/\.0$/,"") + "k" : "" + n; }
+const DOW = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]; // matches weekdayDescriptions order
+function hoursHtml(p){
+  if (!p.hoursTxt || p.hoursTxt.length !== 7) return "";
+  const todayIdx = (new Date().getDay() + 6) % 7; // JS Sun=0 -> Monday-first index
+  const rows = DOW.map((d, i) =>
+    `<div class="hrow${i === todayIdx ? " today" : ""}"><span>${d}</span><span>${esc(p.hoursTxt[i])}</span></div>`
+  ).join("");
+  return `<div class="hours" data-k="${esc(pkey(p))}">
+    <button class="hours-today" type="button">🕐 Today: ${esc(p.hoursTxt[todayIdx])}<span class="chev">▾</span></button>
+    <div class="hours-week">${rows}</div>
+  </div>`;
+}
 function popupHtml(p){
   const nphotos = (p.gallery && p.gallery.length) || (p.photo ? 1 : 0);
   const badge = nphotos > 1 ? `<span class="pcount">▦ ${nphotos}</span>` : "";
@@ -736,6 +770,7 @@ function popupHtml(p){
   const price = p.price ? ` · ${esc(p.price)}` : "";
   const stars = p.rating ? ` · ★ ${p.rating}${p.pop ? " (" + fmtCount(p.pop) + ")" : ""}` : "";
   const on = VISITED[pkey(p)] ? " on" : "";
+  const hours = hoursHtml(p);
   return `<div class="card">
     ${photo}
     <span class="tag ${p.type}">${p.emoji} ${p.type}</span>
@@ -743,6 +778,7 @@ function popupHtml(p){
     <div class="meta">${esc(p.cat)}${price}${stars}</div>
     ${feat}${known}
     <div class="addr">${esc(p.addr)}</div>
+    ${hours}
     <button class="visited-btn${on}" data-k="${esc(pkey(p))}">
       <span class="box">${on ? "✓" : ""}</span><span class="lab">${on ? "Visited" : "Mark visited"}</span>
     </button>
@@ -976,6 +1012,12 @@ document.addEventListener("click", e => {
   b.querySelector(".lab").textContent = now ? "Visited" : "Mark visited";
   const m = byKey[k], el = m && m.getElement();
   if (el){ const mk = el.querySelector(".mk"); if (mk) mk.classList.toggle("visited", now); }
+});
+
+// today's-hours row (inside popups) — tap to expand the full week inline
+document.addEventListener("click", e => {
+  const b = e.target.closest(".hours-today"); if(!b) return;
+  b.parentElement.classList.toggle("open");
 });
 
 // --- fullscreen swipe photo viewer ---
