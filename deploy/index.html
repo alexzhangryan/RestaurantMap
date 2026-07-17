@@ -720,7 +720,11 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
   border-radius:14px;padding:11px 14px;box-shadow:var(--shadow)}
 .search input{border:0;outline:0;background:transparent;color:var(--ink);font-size:16px;width:100%}
 .search svg{flex:0 0 auto;opacity:.5}
-.count{font-size:12px;color:var(--sub);padding:0 2px;white-space:nowrap;margin-top:9px;pointer-events:none}
+.count{font-size:12px;color:var(--sub);padding:5px 9px 5px 3px;margin-top:6px;pointer-events:auto;
+  background:none;border:0;font-family:inherit;display:inline-flex;align-items:center;gap:3px;
+  cursor:pointer;border-radius:999px;-webkit-tap-highlight-color:transparent}
+.count:active{background:color-mix(in srgb,var(--sub) 14%,transparent);transform:scale(.97)}
+.count .chev{opacity:.55;font-size:11px;transform:translateY(-.5px)}
 
 /* filters button (opens the bottom sheet) */
 .filterbtn{position:relative;flex:0 0 auto;width:44px;height:44px;border-radius:14px;background:var(--panel);
@@ -731,17 +735,24 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
   border-radius:9px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;line-height:18px;
   text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.4);border:1.5px solid var(--bg)}
 
-/* filters bottom sheet */
-#fsheet{position:fixed;inset:0;z-index:3000;display:none}
-#fsheet.open{display:block}
-#fsheet .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.4)}
-#fsheet .sheet{position:absolute;left:0;right:0;bottom:0;max-height:82vh;display:flex;flex-direction:column;
-  background:var(--panel);border-radius:20px 20px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.3)}
-#fsheet .fhead{display:flex;align-items:center;justify-content:space-between;padding:14px 8px 12px 18px;
+/* bottom sheets (filters + list) — always mounted, driven by transform/opacity so
+   opening/closing can glide instead of hard-cutting via display:none. */
+#fsheet,#lsheet{position:fixed;inset:0;z-index:3000;pointer-events:none}
+#fsheet.open,#lsheet.open{pointer-events:auto}
+#fsheet .backdrop,#lsheet .backdrop{position:absolute;inset:0;background-color:rgba(0,0,0,0)}
+#fsheet.open .backdrop,#lsheet.open .backdrop{background-color:rgba(0,0,0,.4)}
+#fsheet .sheet,#lsheet .sheet{position:absolute;left:0;right:0;bottom:0;max-height:82vh;display:flex;flex-direction:column;
+  background:var(--panel);border-radius:20px 20px 0 0;box-shadow:0 -8px 30px rgba(0,0,0,.3);transform:translateY(100%)}
+#fsheet.open .sheet,#lsheet.open .sheet{transform:translateY(0)}
+@media (prefers-reduced-motion:no-preference){
+  #fsheet .backdrop,#lsheet .backdrop{transition:background-color .25s ease}
+  #fsheet .sheet,#lsheet .sheet{transition:transform .32s cubic-bezier(.22,.61,.36,1)}
+}
+#fsheet .fhead,#lsheet .lhead{display:flex;align-items:center;justify-content:space-between;padding:14px 8px 12px 18px;
   border-bottom:1px solid var(--line)}
-#fsheet .fhead h2{margin:0;font-size:16px}
+#fsheet .fhead h2,#lsheet .lhead h2{margin:0;font-size:16px}
 #fsheet .fclear{background:none;border:0;color:var(--accent);font-size:14px;font-weight:600;cursor:pointer;padding:6px 4px}
-#fsheet .fclose{background:none;border:0;color:var(--sub);font-size:20px;cursor:pointer;padding:4px 10px}
+#fsheet .fclose,#lsheet .lclose{background:none;border:0;color:var(--sub);font-size:20px;cursor:pointer;padding:4px 10px}
 #fsheet .fbody{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 18px 6px}
 .fsec{margin-bottom:20px}
 .fsec h3{margin:0 0 9px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--sub)}
@@ -763,6 +774,35 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
   background:var(--accent);color:#fff;font-weight:700;font-size:15px;cursor:pointer}
 .fapply:active{transform:scale(.98)}
 
+/* list / browse sheet */
+#lsheet .lbody{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 10px calc(8px + env(safe-area-inset-bottom))}
+.progress-wrap{padding:12px 18px 14px;border-bottom:1px solid var(--line)}
+.progress-stat{display:flex;justify-content:space-between;font-size:12.5px;color:var(--sub);margin-bottom:7px;font-weight:600}
+.progress-stat b{color:var(--ink)}
+.progress-bar{height:7px;border-radius:999px;background:var(--line);overflow:hidden}
+.progress-fill{height:100%;border-radius:999px;width:0%;background:linear-gradient(90deg,var(--visited),#6bd98a)}
+@media (prefers-reduced-motion:no-preference){.progress-fill{transition:width .5s cubic-bezier(.22,.61,.36,1)}}
+.lrow{display:flex;align-items:center;gap:12px;padding:9px 8px;border-radius:14px;cursor:pointer;
+  -webkit-tap-highlight-color:transparent}
+.lrow:active{background:var(--bg);transform:scale(.99)}
+.lrow .lthumb{position:relative;flex:0 0 50px;width:50px;height:50px;border-radius:12px;overflow:hidden;
+  background:linear-gradient(90deg,var(--line) 25%,color-mix(in srgb,var(--line) 55%,var(--panel)) 50%,var(--line) 75%);
+  background-size:250% 100%;animation:shimmer 1.4s ease-in-out infinite;
+  display:flex;align-items:center;justify-content:center;font-size:19px}
+.lrow .lthumb.loaded{animation:none;background:var(--line)}
+.lrow .lthumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0}
+@media (prefers-reduced-motion:no-preference){.lrow .lthumb img{transition:opacity .25s ease}}
+.lrow .lthumb img.loaded{opacity:1}
+.lrow .lmain{flex:1;min-width:0}
+.lrow .lname{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  display:flex;align-items:center;gap:5px}
+.lrow .lname .lvisited{color:var(--visited);font-size:12px;flex:0 0 auto}
+.lrow .lmeta{font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.lrow .ldist{flex:0 0 auto;font-size:12px;font-weight:700;color:var(--sub);text-align:right}
+.lempty{padding:48px 24px;text-align:center;color:var(--sub);font-size:14px;line-height:1.5}
+
+@keyframes shimmer{0%{background-position:-120% 0}100%{background-position:120% 0}}
+
 /* marker + always-on label */
 .mk{position:relative;width:22px;height:22px}
 .pin{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;
@@ -770,6 +810,7 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .pin.Shop{border-color:var(--shop)} .pin.See{border-color:var(--see)}
 .mk.visited .pin{border-color:var(--visited)}
 .leaflet-marker-icon .pin{transition:transform .1s}
+.leaflet-marker-icon:active .pin{transform:scale(.82)}
 /* label: dark text + white halo (map is always the colorful basemap).
    The declutter pass picks each label's side — right/left/top/bottom — to fit the most. */
 .lbl{position:absolute;white-space:nowrap;font-size:11px;font-weight:600;letter-spacing:-.01em;
@@ -786,8 +827,11 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .me{position:relative;width:120px;height:120px}
 .me-cone{position:absolute;left:0;top:0;transform-origin:60px 60px;opacity:0;
   transition:transform .12s ease-out, opacity .3s}
+.me-pulse{position:absolute;left:50%;top:50%;width:16px;height:16px;border-radius:50%;
+  background:rgba(10,132,255,.35);transform:translate(-50%,-50%);animation:me-pulse 2.2s ease-out infinite}
 .me-dot{position:absolute;left:50%;top:50%;width:16px;height:16px;border-radius:50%;
   background:#0a84ff;border:3px solid #fff;box-shadow:0 0 5px rgba(0,0,0,.5);transform:translate(-50%,-50%)}
+@keyframes me-pulse{0%{transform:translate(-50%,-50%) scale(1);opacity:.8}100%{transform:translate(-50%,-50%) scale(3.4);opacity:0}}
 
 /* cluster: a representative pin wearing a little "+N covered" badge */
 .cbadge{position:absolute;top:-6px;right:-11px;min-width:16px;height:16px;padding:0 4px;
@@ -798,8 +842,13 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .leaflet-popup-content-wrapper{border-radius:16px;box-shadow:var(--shadow);background:var(--panel);color:var(--ink)}
 .leaflet-popup-content{margin:14px 16px;font-size:14px;line-height:1.4}
 .leaflet-popup-tip{background:var(--panel)}
-.card .photowrap{position:relative;margin:0 0 10px;cursor:zoom-in}
-.card .photo{width:100%;height:132px;object-fit:cover;border-radius:12px;display:block;background:var(--line)}
+.card .photowrap{position:relative;margin:0 0 10px;cursor:zoom-in;border-radius:12px;overflow:hidden;
+  background:linear-gradient(90deg,var(--line) 25%,color-mix(in srgb,var(--line) 55%,var(--panel)) 50%,var(--line) 75%);
+  background-size:250% 100%;animation:shimmer 1.4s ease-in-out infinite}
+.card .photowrap.loaded{animation:none;background:var(--line)}
+.card .photo{width:100%;height:132px;object-fit:cover;border-radius:12px;display:block;opacity:0}
+.card .photo.loaded{opacity:1}
+@media (prefers-reduced-motion:no-preference){.card .photo{transition:opacity .25s ease}}
 .card .pcount{position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.62);color:#fff;
   font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;backdrop-filter:blur(2px)}
 
@@ -850,13 +899,26 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
 .hrow.today{color:var(--ink);font-weight:700}
 .card .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;color:#fff;margin-bottom:6px}
 .tag.Eat{background:var(--eat)} .tag.Shop{background:var(--shop)} .tag.See{background:var(--see)}
-.visited-btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin:2px 0 9px;
+.visited-btn{position:relative;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin:2px 0 9px;
   padding:10px;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--ink);
   font-weight:600;font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .visited-btn .box{width:17px;height:17px;border-radius:5px;border:2px solid var(--sub);
   display:flex;align-items:center;justify-content:center;font-size:12px;line-height:1;color:#fff}
 .visited-btn.on{border-color:var(--visited);color:var(--visited);background:color-mix(in srgb,var(--visited) 12%,transparent)}
 .visited-btn.on .box{background:var(--visited);border-color:var(--visited)}
+.visited-btn.bump{animation:visited-bump .32s ease}
+@keyframes visited-bump{30%{transform:scale(1.04)}100%{transform:scale(1)}}
+.confetti{position:absolute;top:50%;left:50%;width:6px;height:6px;border-radius:50%;pointer-events:none;
+  animation:confetti-burst .6s ease-out forwards}
+@keyframes confetti-burst{to{transform:translate(var(--tx),var(--ty)) scale(0);opacity:0}}
+
+/* milestone toast */
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 92px);z-index:5000;
+  background:var(--ink);color:var(--bg);padding:12px 20px;border-radius:999px;font-size:13.5px;font-weight:700;
+  box-shadow:0 10px 28px rgba(0,0,0,.35);opacity:0;pointer-events:none;white-space:nowrap;
+  transform:translate(-50%,14px)}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+@media (prefers-reduced-motion:no-preference){#toast{transition:opacity .3s ease, transform .3s cubic-bezier(.22,.61,.36,1)}}
 .btns{display:flex;gap:8px;margin-top:4px}
 .btn{flex:1;text-align:center;text-decoration:none;font-weight:600;font-size:13px;padding:9px;border-radius:10px;
   background:var(--accent);color:#fff}
@@ -885,7 +947,7 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
       <span class="badge" id="filterBadge" hidden>0</span>
     </div>
   </div>
-  <div class="count" id="count"></div>
+  <button class="count" id="count" type="button"><span id="countText"></span><span class="chev">›</span></button>
 </div>
 <div id="fsheet" aria-hidden="true">
   <div class="backdrop" id="fsheetBackdrop"></div>
@@ -910,6 +972,12 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
           <div class="fchip" data-region="all" aria-pressed="true">All areas</div>
           <div class="fchip" data-region="LA / SoCal" aria-pressed="false">LA</div>
           <div class="fchip" data-region="Bay Area" aria-pressed="false">Bay Area</div>
+        </div>
+      </div>
+      <div class="fsec">
+        <h3>Progress</h3>
+        <div class="fchips" id="fProgress">
+          <div class="fchip" data-unvisited="1" aria-pressed="false">🎯 Not visited yet</div>
         </div>
       </div>
       <div class="fsec">
@@ -947,6 +1015,21 @@ html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"SF 
     </div>
   </div>
 </div>
+<div id="lsheet" aria-hidden="true">
+  <div class="backdrop" id="lsheetBackdrop"></div>
+  <div class="sheet">
+    <div class="lhead">
+      <h2>Places</h2>
+      <button class="lclose" id="lclose" aria-label="Close">✕</button>
+    </div>
+    <div class="progress-wrap">
+      <div class="progress-stat" id="progressStat"></div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+    <div class="lbody" id="lbody"></div>
+  </div>
+</div>
+<div id="toast"></div>
 <div class="locate" id="locate" title="Near me">◎</div>
 <div id="viewer" aria-hidden="true">
   <div id="vbox">
@@ -1335,6 +1418,7 @@ let KIND_ON = new Set();      // empty = any category
 let HOURS_MODE = "any";       // any | now | pick
 let PICK_DAY = "today";       // "today" or 0-6 (0=Sunday, matches Date#getDay)
 let PICK_TIME = "18:00";
+let ONLY_UNVISITED = false;
 let VIS = [];   // markers currently shown (set each render, used by declutter)
 
 // --- visited state (saved on THIS device only) ---
@@ -1471,6 +1555,61 @@ function dirUrl(p){ return `https://maps.apple.com/?daddr=${p.lat},${p.lng}&q=${
 function gmapUrl(p){ return `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`; }
 
 function fmtCount(n){ return n >= 1000 ? (n/1000).toFixed(1).replace(/\.0$/,"") + "k" : "" + n; }
+
+// --- distance (needs meMarker from the locate/live-dot section below) ---
+function haversineMi(a, b){
+  const R = 3958.8, toRad = d => d*Math.PI/180;
+  const dLat = toRad(b.lat-a.lat), dLng = toRad(b.lng-a.lng);
+  const s = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+function fmtDist(mi){ return mi < 0.1 ? Math.round(mi*5280) + " ft" : mi.toFixed(1) + " mi"; }
+function distTo(p){ return meMarker ? haversineMi(meMarker.getLatLng(), p) : null; }
+
+// --- gamification: visited progress + list-sheet rows ---
+function visitedStats(){
+  const total = PLACES.length;
+  const done = PLACES.filter(p => VISITED[pkey(p)]).length;
+  return {total, done, pct: total ? Math.round(done/total*100) : 0};
+}
+function listRowHtml(p, dist){
+  const thumb = p.photo
+    ? `<div class="lthumb"><img src="${p.photo}" alt="" loading="lazy" onload="this.classList.add('loaded');this.parentElement.classList.add('loaded')"></div>`
+    : `<div class="lthumb loaded">${p.emoji}</div>`;
+  const meta = [p.cat, p.price, p.rating ? "★ " + p.rating : ""].filter(Boolean).join(" · ");
+  const distTxt = dist != null ? `<div class="ldist">${fmtDist(dist)}</div>` : "";
+  const vis = VISITED[pkey(p)] ? `<span class="lvisited">✓</span>` : "";
+  return `<div class="lrow" data-k="${esc(pkey(p))}">
+    ${thumb}
+    <div class="lmain"><div class="lname">${esc(p.name)}${vis}</div><div class="lmeta">${esc(meta)}</div></div>
+    ${distTxt}
+  </div>`;
+}
+function renderList(){
+  const items = VIS.map(m => m.__p);
+  const here = meMarker ? meMarker.getLatLng() : null;
+  const lbody = document.getElementById("lbody");
+  if (!items.length){
+    lbody.innerHTML = `<div class="lempty">No places match your filters.</div>`;
+  } else if (here){
+    lbody.innerHTML = items
+      .map(p => ({p, d: haversineMi(here, p)}))
+      .sort((a, b) => a.d - b.d)
+      .map(x => listRowHtml(x.p, x.d))
+      .join("");
+  } else {
+    lbody.innerHTML = items.map(p => listRowHtml(p, null)).join("");
+  }
+  const st = visitedStats();
+  document.getElementById("progressFill").style.width = st.pct + "%";
+  document.getElementById("progressStat").innerHTML = `<b>${st.done} / ${st.total}</b> visited &nbsp;·&nbsp; ${st.pct}%`;
+}
+document.getElementById("lbody").addEventListener("click", e => {
+  const row = e.target.closest(".lrow"); if(!row) return;
+  const m = byKey[row.dataset.k]; if(!m) return;
+  closeModal(lsheet);
+  cluster.zoomToShowLayer(m, () => m.openPopup());
+});
 const DOW = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]; // matches weekdayDescriptions order
 function hoursHtml(p){
   if (!p.hoursTxt || p.hoursTxt.length !== 7) return "";
@@ -1487,19 +1626,22 @@ function popupHtml(p){
   const nphotos = (p.gallery && p.gallery.length) || (p.photo ? 1 : 0);
   const badge = nphotos > 1 ? `<span class="pcount">▦ ${nphotos}</span>` : "";
   const photo = p.photo
-    ? `<div class="photowrap" data-k="${esc(pkey(p))}"><img class="photo" src="${p.photo}" alt="" loading="lazy">${badge}</div>`
+    ? `<div class="photowrap" data-k="${esc(pkey(p))}"><img class="photo" src="${p.photo}" alt="" loading="lazy"
+         onload="this.classList.add('loaded');this.parentElement.classList.add('loaded')">${badge}</div>`
     : "";
   const feat = p.feat ? `<div class="feat">🏅 ${esc(p.feat)}</div>` : "";
   const known = p.known ? `<div class="known"><b>Known for:</b> ${esc(p.known)}</div>` : "";
   const price = p.price ? ` · ${esc(p.price)}` : "";
   const stars = p.rating ? ` · ★ ${p.rating}${p.pop ? " (" + fmtCount(p.pop) + ")" : ""}` : "";
+  const d = distTo(p);
+  const dist = d != null ? ` · ${fmtDist(d)}` : "";
   const on = VISITED[pkey(p)] ? " on" : "";
   const hours = hoursHtml(p);
   return `<div class="card">
     ${photo}
     <span class="tag ${p.type}">${p.emoji} ${p.type}</span>
     <h3>${esc(p.name)}</h3>
-    <div class="meta">${esc(p.cat)}${price}${stars}</div>
+    <div class="meta">${esc(p.cat)}${price}${stars}${dist}</div>
     ${feat}${known}
     <div class="addr">${esc(p.addr)}</div>
     ${hours}
@@ -1524,7 +1666,9 @@ const byKey = {};
 const markers = PLACES.map(p => {
   const m = L.marker([p.lat,p.lng], {icon: iconFor(p)});
   m.__p = p;
-  m.bindPopup(popupHtml(p), {maxWidth:300, minWidth:230, autoPan:false});
+  // content is a function (not a precomputed string) so today's-hours + distance-from-me
+  // stay correct no matter when in the session the popup actually gets opened
+  m.bindPopup(() => popupHtml(p), {maxWidth:300, minWidth:230, autoPan:false});
   byKey[pkey(p)] = m;
   return m;
 });
@@ -1569,6 +1713,7 @@ function activeFilterCount(){
   if (CUISINE_ON.size) n++;
   if (KIND_ON.size) n++;
   if (HOURS_MODE !== "any") n++;
+  if (ONLY_UNVISITED) n++;
   return n;
 }
 function updateFilterBadge(){
@@ -1590,14 +1735,16 @@ function render(){
     if (CUISINE_ON.size && !CUISINE_ON.has(p.cuisine)) continue;
     if (KIND_ON.size && !KIND_ON.has(p.kind)) continue;
     if (!hoursMatch(p)) continue;
+    if (ONLY_UNVISITED && VISITED[pkey(p)]) continue;
     if (q && !(p.name.toLowerCase().includes(q) || p.cat.toLowerCase().includes(q) || p.city.toLowerCase().includes(q))) continue;
     vis.push(m); shown++;
   }
   VIS = vis;
   cluster.addLayers(vis);
-  document.getElementById("count").textContent = shown + " places";
+  document.getElementById("countText").textContent = shown + " places";
   updateFilterBadge();
   scheduleDeclutter();
+  if (lsheet.classList.contains("open")) renderList();
 }
 
 // --- Apple-Maps-style labels: show names, nudge each to whichever side fits, hide the rest ---
@@ -1664,18 +1811,26 @@ document.getElementById("fKind").innerHTML = KINDS.map(k =>
   `<div class="fchip" data-kind="${esc(k)}" aria-pressed="false">${esc(k)}</div>`).join("");
 
 const fsheet = document.getElementById("fsheet");
-function openSheet(){ fsheet.classList.add("open"); fsheet.setAttribute("aria-hidden", "false"); }
-function closeSheet(){ fsheet.classList.remove("open"); fsheet.setAttribute("aria-hidden", "true"); }
+const lsheet = document.getElementById("lsheet");
+function openModal(el){ el.classList.add("open"); el.setAttribute("aria-hidden", "false"); }
+function closeModal(el){ el.classList.remove("open"); el.setAttribute("aria-hidden", "true"); }
+function openSheet(){ openModal(fsheet); }
+function closeSheet(){ closeModal(fsheet); }
 document.getElementById("filterBtn").addEventListener("click", openSheet);
 document.getElementById("fclose").addEventListener("click", closeSheet);
 document.getElementById("fsheetBackdrop").addEventListener("click", closeSheet);
 document.getElementById("fapply").addEventListener("click", closeSheet);
+
+document.getElementById("count").addEventListener("click", () => { renderList(); openModal(lsheet); });
+document.getElementById("lclose").addEventListener("click", () => closeModal(lsheet));
+document.getElementById("lsheetBackdrop").addEventListener("click", () => closeModal(lsheet));
 
 function syncSheetUI(){
   document.querySelectorAll("#fType .fchip").forEach(c => c.setAttribute("aria-pressed", TYPE_ON[c.dataset.type]));
   document.querySelectorAll("#fRegion .fchip").forEach(c => c.setAttribute("aria-pressed", c.dataset.region === REGION));
   document.querySelectorAll("#fCuisine .fchip").forEach(c => c.setAttribute("aria-pressed", CUISINE_ON.has(c.dataset.cuisine)));
   document.querySelectorAll("#fKind .fchip").forEach(c => c.setAttribute("aria-pressed", KIND_ON.has(c.dataset.kind)));
+  document.querySelector("#fProgress .fchip").setAttribute("aria-pressed", ONLY_UNVISITED);
   document.querySelector(`input[name="hmode"][value="${HOURS_MODE}"]`).checked = true;
   document.getElementById("fPickRow").hidden = HOURS_MODE !== "pick";
   document.getElementById("fDay").value = PICK_DAY;
@@ -1685,8 +1840,14 @@ function syncSheetUI(){
 document.getElementById("fclear").addEventListener("click", () => {
   TYPE_ON.Eat = true; TYPE_ON.Shop = false; TYPE_ON.See = false;
   REGION = "all"; CUISINE_ON.clear(); KIND_ON.clear();
-  HOURS_MODE = "any"; PICK_DAY = "today"; PICK_TIME = "18:00";
+  HOURS_MODE = "any"; PICK_DAY = "today"; PICK_TIME = "18:00"; ONLY_UNVISITED = false;
   syncSheetUI();
+  render();
+});
+document.getElementById("fProgress").addEventListener("click", e => {
+  const c = e.target.closest(".fchip"); if(!c) return;
+  ONLY_UNVISITED = !ONLY_UNVISITED;
+  c.setAttribute("aria-pressed", ONLY_UNVISITED);
   render();
 });
 document.getElementById("fType").addEventListener("click", e => {
@@ -1725,6 +1886,43 @@ document.getElementById("fTime").addEventListener("change", e => { PICK_TIME = e
 
 document.getElementById("q").addEventListener("input", e => { QUERY = e.target.value; render(); });
 
+// milestone toast — a light celebratory nudge the first time you cross 25/50/75/100% visited
+const toastEl = document.getElementById("toast");
+let toastTimer = 0;
+function showToast(msg){
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 2600);
+}
+const MKEY = "milestone_v1";
+let milestoneSeen = 0;
+try { milestoneSeen = parseInt(localStorage.getItem(MKEY) || "0", 10) || 0; } catch(e){}
+function checkMilestone(){
+  const st = visitedStats();
+  const hit = [25, 50, 75, 100].filter(m => st.pct >= m && milestoneSeen < m).pop();
+  if (!hit) return;
+  milestoneSeen = hit;
+  try { localStorage.setItem(MKEY, String(hit)); } catch(e){}
+  const msg = hit === 100 ? `🏆 All ${st.total} places visited!` : `🎉 ${hit}% visited — ${st.done}/${st.total} places!`;
+  showToast(msg);
+}
+
+// small confetti burst from the mark-visited button, for a bit of delight
+function burstConfetti(btn){
+  const colors = ["#2fb344", "#0a84ff", "#e8590c", "#ffd43b"];
+  for (let i = 0; i < 10; i++){
+    const s = document.createElement("span");
+    s.className = "confetti";
+    const ang = Math.random() * Math.PI * 2, dist = 26 + Math.random() * 20;
+    s.style.setProperty("--tx", Math.cos(ang) * dist + "px");
+    s.style.setProperty("--ty", Math.sin(ang) * dist + "px");
+    s.style.background = colors[i % colors.length];
+    btn.appendChild(s);
+    s.addEventListener("animationend", () => s.remove());
+  }
+}
+
 // visited toggle (inside popups) — flips the on-device flag + pin outline to green
 document.addEventListener("click", e => {
   const b = e.target.closest(".visited-btn"); if(!b) return;
@@ -1734,8 +1932,11 @@ document.addEventListener("click", e => {
   b.classList.toggle("on", now);
   b.querySelector(".box").textContent = now ? "✓" : "";
   b.querySelector(".lab").textContent = now ? "Visited" : "Mark visited";
+  b.classList.remove("bump"); void b.offsetWidth; b.classList.add("bump");
   const m = byKey[k], el = m && m.getElement();
   if (el){ const mk = el.querySelector(".mk"); if (mk) mk.classList.toggle("visited", now); }
+  if (now){ burstConfetti(b); checkMilestone(); }
+  if (lsheet.classList.contains("open")) renderList();
 });
 
 // today's-hours row (inside popups) — tap to expand the full week inline
@@ -1861,21 +2062,28 @@ function startHeading(){
   window.addEventListener("deviceorientation", onOrient, true);
 }
 
+// Tapping locate starts a continuous watch (not a one-shot fix) so the dot tracks you
+// as you move, like Apple/Google Maps — but only the FIRST fix recenters the map, so
+// later updates don't fight you if you've panned away to look at something else.
+let recenterOnFix = true;
 document.getElementById("locate").addEventListener("click", () => {
   const DOE = window.DeviceOrientationEvent;          // iOS needs permission on a user gesture
   if(DOE && typeof DOE.requestPermission === "function")
     DOE.requestPermission().then(s => { if(s === "granted") startHeading(); }).catch(()=>{});
   else startHeading();
-  map.locate({setView:true, maxZoom:15, enableHighAccuracy:true});
+  recenterOnFix = true;
+  map.locate({watch:true, setView:false, maxZoom:15, enableHighAccuracy:true});
 });
 map.on("locationfound", e => {
   if(meMarker){ meMarker.setLatLng(e.latlng); }
   else {
     meMarker = L.marker(e.latlng, {interactive:false, zIndexOffset:10000, icon: L.divIcon({
       className:"", iconSize:[120,120], iconAnchor:[60,60],
-      html:`<div class="me">${CONE}<div class="me-dot"></div></div>`})}).addTo(map);
+      html:`<div class="me"><div class="me-pulse"></div>${CONE}<div class="me-dot"></div></div>`})}).addTo(map);
   }
   updateCone();
+  if(recenterOnFix){ recenterOnFix = false; map.setView(e.latlng, Math.max(map.getZoom(), 15), {animate:true}); }
+  if(lsheet.classList.contains("open")) renderList();
 });
 map.on("locationerror", () => alert("Couldn't get your location. Allow location access and try again."));
 
